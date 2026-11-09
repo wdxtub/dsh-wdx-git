@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4 — 2026-11-09
+
+- 顶栏同步按钮加入 GitHub Desktop 式方向徽标：`↓` 表示远端待拉取提交，`↑` 表示本地待推送提交；Pull / Push 主图标改为细箭头，仓库行不再重复显示计数。
+- 推送分支时一并推送可达的 annotated tag（`git push --follow-tags`），tag 推送失败不影响分支同步。
+
 ## 0.1.3 — 2026-11-09
 
 - 顶栏 Fetch origin 图标改为循环箭头，fetch / sync 进行中旋转。
