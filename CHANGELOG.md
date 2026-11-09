@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 提交者占位图标改为 wdxtub-blog 的 W 标记（单色简化版，保留右上角小装饰），不再读取 DSH 账户或 GitHub 头像。
+
 ## 0.1.1 — 2026-11-09
 
 - 顶栏同步按钮按 ahead / behind / upstream 动态显示 Fetch / Pull / Push / Sync / Publish。
