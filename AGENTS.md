@@ -41,39 +41,22 @@ auth URL 会被打码，无法继续。
 用 PTY + expect 启动发布。脚本会打印认证 URL，停一下等 npm 打开浏览器；按回车后
 浏览器打开 npm 认证页，用户完成 2FA/Passkey，npm 自动取到 OTP 并完成发布。
 
-把这个脚本保存为 `/tmp/npm-publish.exp`（路径按实际仓库调整）：
-
-```tcl
-set timeout 600
-cd /Users/wdxtub/Documents/WhatThey/dsh-wdx-git
-log_user 1
-spawn npm publish --access public --registry=https://registry.npmjs.org/
-expect {
-  "Press ENTER to open in the browser" { send "\r"; puts "\nAUTH_BROWSER_OPENED"; }
-  "Published" { puts "\nPUBLISH_DONE"; exit 0 }
-  timeout { puts "\nTIMEOUT_WAIT_PROMPT"; exit 2 }
-}
-expect {
-  "Published" { puts "\nPUBLISH_DONE"; exit 0 }
-  "+ dsh-wdx-git" { puts "\nPUBLISH_DONE"; exit 0 }
-  "npm error" { puts "\nPUBLISH_ERROR"; exit 1 }
-  timeout { puts "\nTIMEOUT_WAIT_AUTH"; exit 2 }
-}
-```
-
-后台运行并跟踪输出：
+仓库自带脚本 `scripts/publish-npm.exp`，直接运行：
 
 ```bash
-expect -f /tmp/npm-publish.exp > /tmp/npm-publish-pty.log 2>&1 &
+expect scripts/publish-npm.exp > /tmp/npm-publish-pty.log 2>&1 &
 tail -f /tmp/npm-publish-pty.log
 ```
+
+脚本用 `exp_continue` 持续读到 EOF，再按 npm 退出码和是否看到 `+ dsh-wdx-git`
+判定成功，不会在 npm 退出瞬间误报 `spawn id ... not open`。
 
 关键点：
 
 - 必须给 PTY；`expect` 的 `spawn` 提供它。不要用 `printf '\n' | script ...`，
   输入可能在提示出现前就 EOF，npm 会卡在 “Press ENTER”。
-- 第一次 `expect` 只等 “Press ENTER” 或成功；不要匹配泛化的 `error`，测试输出里
-  有测试名带 “error”，会误杀发布。
+- 脚本只匹配 `Press ENTER` / `+ dsh-wdx-git` / `Published` / `npm error`；
+  不要匹配泛化的 `error`，测试输出里有测试名带 “error”，会误杀发布。
 - 看到 `AUTH_BROWSER_OPENED` 后，等用户在浏览器完成认证。不要重复启动另一个发布。
 - 如果浏览器没打开，从日志里取出 `https://www.npmjs.com/auth/cli/...` 让用户手动打开。
 - 发布成功后日志里会有类似 `+ dsh-wdx-git` 的 npm 回执和 `PUBLISH_DONE`。
