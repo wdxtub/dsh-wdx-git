@@ -3,8 +3,9 @@
 **Git，不再打断你的 AI 会话。**
 
 WDX Git 是 DeepSeek Harness 右侧栏里的 Git 面板。AI 改完代码，你不需要切到终端，
-也不需要在一排 Pull / Push / Fetch 按钮里做选择：一个 **Fetch origin** 完成拉取、
-合并和推送；提交页默认打开，改动默认全选；提交信息可以让 AI 顺手写好。
+也不需要在一排 Pull / Push / Fetch 按钮里做选择：一个同步按钮完成拉取、合并和推送，
+并会按仓库状态显示 **Fetch origin / Pull origin / Push origin / Publish branch / Sync**；
+提交页默认打开，改动默认全选；提交信息可以让 AI 顺手写好。
 
 > DSH 0.2.x · macOS / Windows / Linux · MIT
 
@@ -22,7 +23,7 @@ WDX Git 把这段流程留在会话旁边，只保留真正需要你做的决定
 
 | 常见流程 | WDX Git |
 | --- | --- |
-| 先 Fetch，再判断 Pull / Push | 点一个 **Fetch origin**，自动完成需要的事 |
+| 先 Fetch，再判断 Pull / Push | 顶栏按钮自动显示 Fetch / Pull / Push，点一下完成需要的事 |
 | 手动勾选要提交的文件 | 默认全选，不想提交的再取消 |
 | 手写提交信息 | AI 读本次 diff，按仓库风格写 |
 | 冲突时切到外部工具 | 在面板里看 ours / theirs，解决后继续 |
@@ -40,7 +41,17 @@ WDX Git 把这段流程留在会话旁边，只保留真正需要你做的决定
 
 ### 一个按钮，完成同步
 
-顶栏只有仓库、分支和一个 **Fetch origin**。点一下，WDX Git 会：
+顶栏只有仓库、分支和一个同步按钮。按钮会按仓库状态显示：
+
+| 状态 | 按钮 |
+| --- | --- |
+| 已同步 | Fetch origin |
+| 只落后远端 | Pull origin |
+| 只有本地提交 | Push origin |
+| 两边都有新提交 | Sync |
+| 还没有 upstream | Publish branch |
+
+不管显示哪一个，点下去都由 WDX Git 完成：
 
 ```
 fetch → 补 upstream → 快进或合并 → 需要时推送
@@ -127,16 +138,19 @@ dsh plugin --profile desktop add ./dsh-wdx-git
 ## 上手
 
 1. 打开任意会话的 Git 面板；默认就在「提交」。
-2. 顶栏点 **Fetch origin** 同步远端；需要时它会自动合并、推送。
+2. 顶栏按钮会显示 **Fetch origin / Pull origin / Push origin / Sync**，点一下同步远端；
+   需要时它会自动合并、推送。
 3. 写 Summary，或者点 **AI 生成**。
 4. 点「提交 N 个文件到 main」；勾选「提交后推送」可以接着同步。
 
 ## 常见问题
 
-**Q：只有一个 Fetch origin，会不会不知道发生了什么？**
+**Q：顶栏按钮为什么会变？**
 
-A：按钮上方会显示上次 fetch、ahead / behind 和 upstream。点一下之后，状态栏会
-告诉你这次是 fetch、merge 还是 push，以及是否动过 stash。
+A：它只反映一件事：点下去主要会发生什么。已同步是 Fetch origin，落后是 Pull origin，
+有本地提交是 Push origin，两边都有是 Sync，没有 upstream 是 Publish branch。
+按钮上方还会显示上次 fetch、ahead / behind 和 upstream；点下之后，状态栏会告诉你
+这次是 fetch、merge 还是 push，以及是否动过 stash。
 
 **Q：会不会自动 force push？**
 

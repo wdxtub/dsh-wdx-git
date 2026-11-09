@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 顶栏同步按钮按 ahead / behind / upstream 动态显示 Fetch / Pull / Push / Sync / Publish。
+
 ## 0.1.0 — 2026-11-09
 
 首个公开版本。

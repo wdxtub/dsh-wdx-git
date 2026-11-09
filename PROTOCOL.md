@@ -484,8 +484,10 @@ ctx.slots.inject('conversation.session.header.utilities', () =>
 
 - 所有宽度都使用单列 tab：`提交 | 变更 | 历史 | 分支 | 差异`，默认选中「提交」。
   提交页不再固定在底部；宽幅也不做左右分栏，避免破坏一体化视觉。
-- 顶栏只有仓库名、分支下拉和一个 `Fetch origin` 主按钮；点击永远调用 `sync`，
-  由 Host 决定 fetch / merge / push。上次 fetch、ahead/behind、upstream 以文本显示。
+- 顶栏只有仓库名、分支下拉和一个同步主按钮；按钮按 snapshot 显示
+  `Fetch origin` / `Pull origin` / `Push origin` / `Sync` / `Publish branch`，
+  点击永远调用 `sync`，由 Host 决定 fetch / merge / push。上次 fetch、ahead/behind、
+  upstream 以文本显示。
 - 「变更」把所有状态收拢成一个平铺列表，默认全部勾选；取消勾选只影响本次提交，
   `commit` 会带 `paths` / `exclude`。列表不提供单独的 stage / unstage 按钮。
 - 轮询：每 8s `snapshot`（`document.hidden` 时跳过）；window focus 和
