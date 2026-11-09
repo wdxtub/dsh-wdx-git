@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WDX Git",
+    "description": "把 Git 留在 AI 会话里：一个 Fetch origin 完成拉取、合并与推送，提交页默认打开、改动默认全选，AI 顺手写好提交信息。"
+  }
+}

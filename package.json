@@ -1,0 +1,78 @@
+{
+  "name": "dsh-wdx-git",
+  "version": "0.1.0",
+  "description": "Git, inside your AI session: one Fetch origin sync, a default-selected commit tab, default-checked changes, history, branches, conflict resolution and AI commit messages for DSH.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.png",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "icon.png",
+    "screenshots.json",
+    "assets/screenshots",
+    "README.md",
+    "PROTOCOL.md",
+    "CHANGELOG.md",
+    "RELEASING.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "git",
+    "github-desktop",
+    "web-ui"
+  ],
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.0"
+  },
+  "author": "wdxtub",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wdxtub/dsh-wdx-git.git"
+  },
+  "homepage": "https://github.com/wdxtub/dsh-wdx-git",
+  "icon": "./icon.png",
+  "bugs": {
+    "url": "https://github.com/wdxtub/dsh-wdx-git/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

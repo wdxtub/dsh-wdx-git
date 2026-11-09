@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Git">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b4048"/>
+      <stop offset="0.55" stop-color="#22262c"/>
+      <stop offset="1" stop-color="#101215"/>
+    </linearGradient>
+    <linearGradient id="fg" x1="20" y1="12" x2="44" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9ced6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <circle cx="49" cy="14" r="12" fill="#ffffff" opacity="0.06"/>
+  <g fill="none" stroke="url(#fg)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v22"/>
+    <path d="M43 19a13 13 0 0 1-13 13h-9"/>
+  </g>
+  <circle cx="21" cy="47" r="6" fill="#ffffff"/>
+  <circle cx="43" cy="18" r="6" fill="#f2f4f7" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="21" cy="47" r="2.4" fill="#2b3038"/>
+  <circle cx="43" cy="18" r="2.4" fill="#17191d"/>
+</svg>

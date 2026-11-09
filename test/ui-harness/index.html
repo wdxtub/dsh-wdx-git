@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WDX Git — UI harness</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --dsw-alias-bg-base: #161a20;
+      --dsw-alias-bg-layer-1: #1d222b;
+      --dsw-alias-bg-layer-2: #252b36;
+      --dsw-alias-bg-overlay: #202630;
+      --dsw-alias-border-l1: #2e3541;
+      --dsw-alias-border-l2: #3c4554;
+      --dsw-alias-label-primary: #eef1f5;
+      --dsw-alias-label-secondary: #9aa3b2;
+      --dsw-alias-label-tertiary: #727c8c;
+      --dsw-alias-brand-primary: #5b7cff;
+      --dsw-alias-state-business-primary: #7aaaff;
+      --dsw-alias-label-primary-foreground: #0f1115;
+      --dsw-alias-button-elevated-fill: #252b36;
+      --dsw-alias-button-info-hover: #93c5fd;
+      --dsw-specific-selector: #2a3140;
+      --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, .065);
+      --dsw-alias-interactive-bg-active: rgba(255, 255, 255, .09);
+      --dsw-static-deepseek-400: #7aaaff;
+      --dsw-static-deepseek-300: #b7c8fe;
+      --dsw-static-deepseek-450: #5686fe;
+      --dsw-static-deepseek-600: #4868b2;
+      --dsw-static-blue-400: #60a5fa;
+      --dsw-static-blue-300: #93c5fd;
+      --dsw-static-blue-500: #3b82f6;
+      --dsw-static-green-500: #22c55e;
+      --dsw-static-amber-500: #f59e0b;
+      --dsw-static-red-500: #ef4444;
+      --dsw-static-violet-400: #a78bfa;
+      --dsw-static-green-400: #4ed17e;
+      --dsw-static-amber-400: #f7ad31;
+      --dsw-static-red-400: #f25a5a;
+      --dsw-alias-state-success-primary: #35c77e;
+      --dsw-alias-state-error-primary: #ff6b6b;
+      --dsw-alias-state-warn-primary: #f0b429;
+      --dsw-alias-file-diff-added-bg: rgba(46, 160, 67, .18);
+      --dsw-alias-file-diff-deleted-bg: rgba(248, 81, 73, .16);
+      --dsw-alias-file-diff-added-marker: #3fb950;
+      --dsw-alias-file-diff-deleted-marker: #f85149;
+      --dsw-alias-file-diff-added-gutter: rgba(46, 160, 67, .22);
+      --dsw-alias-file-diff-deleted-gutter: rgba(248, 81, 73, .2);
+    }
+    html, body { margin: 0; padding: 0; height: 100%; background: #0f1217; color: #eef1f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif; }
+    body { display: flex; align-items: center; justify-content: center; }
+    #stage { height: min(900px, calc(100vh - 24px)); width: min(1180px, calc(100vw - 24px)); border: 1px solid #2a313c; border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px rgba(0, 0, 0, .5); background: var(--dsw-alias-bg-base); }
+    #stage.narrow { width: min(430px, calc(100vw - 24px)); }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="./fixtures.js"></script>
+  <script>
+    window.__ModuleLoader__ = {
+      load: function (definition) { window.__PLUGIN_DEF__ = definition },
+    }
+  </script>
+  <script src="../../lib/client.js"></script>
+  <script src="./harness.js"></script>
+</body>
+</html>
