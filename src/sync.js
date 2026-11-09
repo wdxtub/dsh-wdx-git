@@ -259,6 +259,8 @@ async function pushWithRetry({ run, cwd, branch, remote, steps, note, signal }) 
   let result = await pushOnce(run, cwd, branch, upstream, signal)
   if (result.code === 0) {
     note('push', brief(result.stderr, 400))
+    const tags = await pushTags(run, signal)
+    if (tags && tags.code !== 0) note('tags', brief(tags.stderr || tags.stdout, 400))
     const final = await resolveUpstream(run, cwd, branch, remote, signal)
     return {
       mode: 'push',
@@ -318,6 +320,8 @@ async function pushWithRetry({ run, cwd, branch, remote, steps, note, signal }) 
   result = await pushOnce(run, cwd, branch, upstream, signal)
   if (result.code !== 0) throw commandFailure(['push'], result)
   note('push', brief(result.stderr, 400))
+  const tags = await pushTags(run, signal)
+  if (tags && tags.code !== 0) note('tags', brief(tags.stderr || tags.stdout, 400))
   const final = await resolveUpstream(run, cwd, branch, remote, signal)
   return {
     mode: 'push',
@@ -342,6 +346,19 @@ async function pushOnce(run, cwd, branch, upstream, signal) {
     return run(['push'], { allowFailure: true, timeoutMs: NETWORK_TIMEOUT, signal })
   }
   return run(['push', '-u', upstream.remote, branch], { allowFailure: true, timeoutMs: NETWORK_TIMEOUT, signal })
+}
+
+/**
+ * Push annotated tags that reach the branch. A release tag (`npm version`)
+ * lives only in the local repository until it is pushed explicitly, so a
+ * branch-only push leaves the remote without it. Tag failures do not fail the
+ * sync: the branch is already up to date, and a conflicting remote tag needs a
+ * deliberate decision rather than a retry.
+ */
+async function pushTags(run, signal) {
+  const listed = await run(['tag', '-l'], { allowFailure: true, signal })
+  if (listed.code !== 0 || String(listed.stdout || '').trim() === '') return null
+  return run(['push', '--follow-tags'], { allowFailure: true, timeoutMs: NETWORK_TIMEOUT, signal })
 }
 
 function isRejectedPush(result) {

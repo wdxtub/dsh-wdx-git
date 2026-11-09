@@ -6,6 +6,10 @@
   if (narrow) stage.classList.add('narrow')
   var fixtures = window.__FIXTURES__
   var snapshot = conflictMode ? fixtures.conflictSnapshot : fixtures.snapshot
+  var aheadOverride = params.get('ahead')
+  var behindOverride = params.get('behind')
+  if (aheadOverride !== null) snapshot.repo.ahead = Number(aheadOverride)
+  if (behindOverride !== null) snapshot.repo.behind = Number(behindOverride)
   var registered = {}
   var dictionaries = null
 

@@ -16,6 +16,9 @@ WDX Git 在 DeepSeek Harness 右侧栏里加一个 Git 面板。从会话头部�
 | 两边都有新提交 | Sync |
 | 分支还没有 upstream | Publish branch |
 
+落后或领先远端时，按钮内会显示带方向箭头的计数徽标：`↓` 是待拉取的远端提交，
+`↑` 是待推送的本地提交。
+
 点下去会 fetch、需要时补 upstream、快进或合并，有内容时再推送。工作区改动
 会在合并前自动 stash，合并后恢复。推送被拒时只 fetch + merge + 重试一次。
 遇到冲突就停下来。WDX Git 不 force push、不自动 rebase，也不改写已有历史。

@@ -200,3 +200,18 @@ test('sync on an empty repository only fetches and never attempts an impossible 
   const graph = await operations.handle('graph', { cwd: repo, all: false })
   assert.deepEqual(graph.commits, [])
 })
+
+test('sync pushes annotated tags that reach the pushed branch', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const call = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(env.repo, 'tagged.txt', 'tagged\n')
+  await call('commit', { message: 'feat: tag me' })
+  await git(['tag', '-a', 'v0.0.1', '-m', 'v0.0.1'], env.repo)
+
+  const result = await call('sync')
+  assert.equal(result.pushed, true)
+  assert.equal(await git(['tag', '-l'], env.remote), 'v0.0.1')
+})

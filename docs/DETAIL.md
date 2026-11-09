@@ -18,6 +18,9 @@ button label follows the repository state:
 | Both sides have new commits | Sync |
 | Branch has no upstream | Publish branch |
 
+When the branch is behind or ahead, the button shows count badges with directional
+arrows: ↓ for remote commits to pull, ↑ for local commits to push.
+
 A click runs fetch, sets the upstream when needed, fast-forwards or merges, then
 pushes when there is something to push. Working-tree changes are stashed before a
 merge and restored afterwards. A rejected push is retried once after fetch and

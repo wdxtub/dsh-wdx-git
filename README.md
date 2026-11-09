@@ -51,6 +51,9 @@ WDX Git 把这段流程留在会话旁边，只保留真正需要你做的决定
 | 两边都有新提交 | Sync |
 | 还没有 upstream | Publish branch |
 
+落后或领先远端时，按钮内会出现带方向箭头的计数徽标：`↓` 是待拉取的远端提交，
+`↑` 是待推送的本地提交。
+
 不管显示哪一个，点下去都由 WDX Git 完成：
 
 ```
@@ -151,8 +154,8 @@ dsh plugin --profile desktop add ./dsh-wdx-git
 
 A：它只反映一件事：点下去主要会发生什么。已同步是 Fetch origin，落后是 Pull origin，
 有本地提交是 Push origin，两边都有是 Sync，没有 upstream 是 Publish branch。
-按钮上方还会显示上次 fetch、ahead / behind 和 upstream；点下之后，状态栏会告诉你
-这次是 fetch、merge 还是 push，以及是否动过 stash。
+按钮内会显示上次 fetch，以及带方向箭头的领先 / 落后计数徽标；仓库行显示 upstream。
+点下之后，状态栏会告诉你这次是 fetch、merge 还是 push，以及是否动过 stash。
 
 **Q：会不会自动 force push？**
 
