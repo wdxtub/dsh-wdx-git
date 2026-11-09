@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-11-09
 
 - 顶栏同步按钮按 ahead / behind / upstream 动态显示 Fetch / Pull / Push / Sync / Publish。
+- 更新 README、市场简介和发布说明，补充 npm 安装与发布流程。
 
 ## 0.1.0 — 2026-11-09
 
