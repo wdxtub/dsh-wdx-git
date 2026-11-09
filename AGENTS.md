@@ -11,7 +11,7 @@
 - npm 官方源：`https://registry.npmjs.org/`。
 - **不要用 npmmirror 发布**；它只是镜像，`npm login` / `npm publish` 都显式带
   `--registry=https://registry.npmjs.org/`。
-- 当前 DSH 兼容声明：`engines.dsh: ">=0.2.0"`；确认 `npm test` 通过后再发布。
+- 当前 DSH 兼容声明：`engines.dsh: ">=0.2.0 <0.3.0"`；确认 `npm test` 通过后再发布。
 
 ## 发布前检查
 

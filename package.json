@@ -17,6 +17,7 @@
     "lib/client.js",
     "cordis.patch.yml",
     "locale/*.json",
+    "docs",
     "icon.svg",
     "icon.png",
     "screenshots.json",
@@ -51,6 +52,7 @@
   "license": "MIT",
   "keywords": [
     "dsh",
+    "dsh-plugin",
     "deepseek-harness",
     "plugin",
     "git",
@@ -59,7 +61,7 @@
   ],
   "engines": {
     "node": ">=22",
-    "dsh": ">=0.2.0"
+    "dsh": ">=0.2.0 <0.3.0"
   },
   "author": "wdxtub",
   "repository": {

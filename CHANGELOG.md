@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 顶栏 Fetch origin 图标改为循环箭头，fetch / sync 进行中旋转。
+- 对齐 DSH 官方插件规范：`engines.dsh` 加上 `<0.3.0` 上界；`keywords` 增加 `dsh-plugin`。
+- 补中英文详细介绍文档 `docs/DETAIL.md` / `docs/DETAIL.zh.md`，并在 `locale/*.json` 用 `meta.detail` 声明；插件页不再对英文用户回退到中文 README。
+
 ## 0.1.2 — 2026-11-09
 
 - 提交者占位图标改为 wdxtub-blog 的 W 标记（单色简化版，保留右上角小装饰），不再读取 DSH 账户或 GitHub 头像。
