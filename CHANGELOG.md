@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 — 2026-11-09
 
 - 顶栏 Fetch origin 图标改为循环箭头，fetch / sync 进行中旋转。
 - 对齐 DSH 官方插件规范：`engines.dsh` 加上 `<0.3.0` 上界；`keywords` 增加 `dsh-plugin`。
