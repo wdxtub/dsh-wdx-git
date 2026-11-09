@@ -1,6 +1,6 @@
 {
   "name": "dsh-wdx-git",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Git, inside your AI session: one sync button that becomes Fetch/Pull/Push/Sync, a default-selected commit tab, default-checked changes, history, branches, conflict resolution and AI commit messages for DSH.",
   "type": "module",
   "main": "index.js",
