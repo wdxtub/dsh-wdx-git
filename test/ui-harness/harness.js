@@ -2,6 +2,7 @@
   var params = new URLSearchParams(location.search)
   var narrow = params.has('narrow')
   var conflictMode = params.has('conflict')
+  var syncConflict = params.has('syncConflict')
   var stage = document.getElementById('stage')
   if (narrow) stage.classList.add('narrow')
   var fixtures = window.__FIXTURES__
@@ -82,7 +83,18 @@
     if (op === 'aiCommit') {
       return ok(fixtures.aiCommit)
     }
-    if (op === 'aiResolve') return ok(fixtures.aiResolve)
+    if (op === 'aiResolve') {
+      if (request.apply) {
+        snapshot.status.conflicted = snapshot.status.conflicted.filter(function (entry) {
+          return entry.path !== request.path
+        })
+        return ok({
+          path: request.path, resolved: true, deleted: false, unmerged: snapshot.status.conflicted.length,
+          deterministic: false, route: 'whole', model: fixtures.aiResolve.model, warning: '',
+        })
+      }
+      return ok(fixtures.aiResolve)
+    }
     if (op === 'applyResolution' || op === 'takeSide' || op === 'markResolved') {
       snapshot.status.conflicted = []
       return ok({ path: request.path, resolved: true, deleted: !!request.delete, unmerged: 0, output: '(demo) conflict resolved' })
@@ -94,6 +106,15 @@
       return ok({ hash: 'abc1234', subject: request.message.split('\n')[0], branch: 'main', output: '[main abc1234] ' + request.message.split('\n')[0] })
     }
     if (op === 'sync' || op === 'pull' || op === 'push' || op === 'fetch') {
+      if (syncConflict && op !== 'fetch') {
+        snapshot.status.conflicted = [{ path: 'docs/PROTOCOL.md', status: 'UU', x: 'U', y: 'U', oldPath: null }]
+        return ok({
+          mode: request.mode || 'sync', branch: 'main', remote: 'origin', upstream: 'origin/main',
+          ahead: 0, behind: 0, hasUpstream: true, merged: 'merge', pushed: false,
+          stashed: false, conflict: true, conflictFiles: ['docs/PROTOCOL.md'], steps: [],
+          output: '(demo) merge conflict', at: Date.now(),
+        })
+      }
       snapshot.repo.ahead = 0
       snapshot.repo.behind = 0
       return ok({

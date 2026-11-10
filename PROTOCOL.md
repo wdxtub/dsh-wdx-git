@@ -327,7 +327,9 @@ content-type: application/json
 三份内容各自最多 400k 字符。数据来自索引 stage（`git ls-files -u -z` + `git cat-file -p`），
 不从磁盘读文件。
 
-`aiResolve`：`{ cwd, path, hint?, sessionId?, selection?, effort? }`
+`aiResolve`：`{ cwd, path, hint?, sessionId?, selection?, effort?, apply?: boolean }`
+
+预览（默认 `apply` 缺省或 false）返回：
 
 ```json
 {
@@ -336,6 +338,7 @@ content-type: application/json
   "delete": false,
   "deterministic": false,
   "model": "magpie/baidu-qianfan/deepseek-v4.1-flash",
+  "route": "whole",
   "hasBase": true,
   "oursExists": true,
   "theirsExists": true,
@@ -347,6 +350,17 @@ content-type: application/json
 - 模型返回 `<<<DELETE_FILE>>>` 表示删除。
 - 输出必须非空、不含行首冲突标记；`max-tokens` 截断直接 `ai-unavailable`。
 - **不写盘**。
+- `route` 为 `whole`（整文件）、`hunks`（大文件按冲突块）或 `deterministic`。
+
+`apply: true` 时跳过预览：Host 直接写盘并 `git add`（删除冲突用 `git rm`），
+返回 `{ path, resolved, deleted, deterministic, model, route, unmerged, warning }`，
+没有 `suggested`。客户端「AI 解决全部」逐个文件调用，单文件失败不中断其余文件，
+最后汇总成功数与失败原因。
+
+大文件策略：三份内容合计 >240000 字符，或工作区合并结果 >12000 字符时，不再把
+整文件送给模型。Host 读取工作区里的冲突标记，按冲突块逐个请求（每块带前后各
+20 行上下文），全部块成功后再拼回完整文件写入。单块三份合计 >24000 字符、冲突块
+超过 40 个或标记无法解析时，该文件拒绝自动解决并返回明确原因；不会写入半成品。
 
 `applyResolution`：`{ cwd, path, content?, delete? }`
 
@@ -412,7 +426,6 @@ Host 目录缓存 60 秒。
 {
   "cwd": "/abs/repo",
   "sessionId": "session-1",
-  "mode": "quick|detailed",
   "hint": "optional",
   "selection": { "provider": "volc-tp", "model": "glm-5.3-flash" },
   "effort": "auto|default|low|none|...",
@@ -436,7 +449,7 @@ Host 目录缓存 60 秒。
   "model": "magpie/...",
   "fallback": false,
   "truncated": false,
-  "mode": "quick",
+  "attempts": 1,
   "effort": "low",
   "warning": ""
 }
@@ -448,13 +461,23 @@ Host 目录缓存 60 秒。
 - `git status --porcelain=v2` 的文件列表（含 untracked）；
 - `git diff HEAD --stat`；
 - 最近 12 条提交 subject（语言/风格参考）；
-- 详细模式额外读取最多 5 个未跟踪文本文件（每个 ≤6k，总量 ≤24k）；
-- quick diff 截断 12k；detailed 截断 30k。
+- 最多 5 个未跟踪文本文件（每个 ≤6k，总量 ≤24k）；
+- diff 截断 30k。
 - 如果请求带 `paths`，上述 diff / stat / 文件列表 / 未跟踪内容都只取这些路径；UI 在
   用户取消勾选时自动传入，保证生成的提交信息只描述本次会提交的文件。
 
-模型输出不合法（半句话、缺项目使用的 Conventional 前缀、括号不闭合、冒号后为空）→
-确定性 fallback：`chore: 更新 N 个文件` / `chore: update N files`，`fallback: true`。
+模型输出校验与重试：
+
+- 一次请求同时产出标题和正文；正文按 PR 摘要的密度：一句动机 + 2–4 条具体改动，
+  涉及测试时补一条覆盖范围。信息量介于旧的快速与详细之间。
+- 每次输出都校验：被截断、标题为空/半句话/缺 Conventional 前缀/括号不闭合，
+  或改动量较大（≥5 行、多文件、新文件内容 ≥200 字）却正文过短（<60 个非空白字符）
+  或只有一句话（少于 2 个信息单元），都视为不合格。
+- 不合格时携带「上一次为什么被拒」重新请求，最多重试 3 次（首次 + 3 次重试），
+  每次重试把 `maxTokens` 提高 600，上限 3400。
+- 重试仍不合格时：有可用标题就只保留标题并在 `warning` 说明；标题也不可用才落到
+  确定性 fallback：`chore: 更新 N 个文件` / `chore: update N files`，`fallback: true`。
+  `attempts` 是实际请求次数，UI 仍可继续提交。
 
 自定义提示词：`git config --get wdx.git.commitPrompt`；非空时替换系统提示词，
 数据装配逻辑不变。
@@ -499,9 +522,10 @@ ctx.slots.inject('conversation.session.header.utilities', () =>
 
 | key | 内容 |
 | --- | --- |
-| `wdx-git:ai` | `{ provider, model, effort, mode }`（mode 为 quick/detailed） |
+| `wdx-git:ai` | `{ provider, model, effort }` |
 | `wdx-git:push-after-commit` | boolean |
 | `wdx-git:auto-stash` | boolean |
+| `wdx-git:auto-resolve-conflicts` | boolean，默认 `false`；开启后 sync / pull 产生冲突会直接调用 `aiResolve(apply)` 逐个解决，不再确认 |
 
 仓库级自定义提示词在 git config，不进 localStorage。
 
@@ -510,7 +534,7 @@ ctx.slots.inject('conversation.session.header.utilities', () =>
 - 所有 git 命令走 argv 数组，`ctx.subprocess.spawn`，不经过 shell。
 - `cwd` 必须绝对路径；paths 必须仓库内相对路径且不含 `..`。
 - refs 白名单 `[\p{L}\p{N}._/-]+`，拒绝前导 `-`；hash 必须 4-40 位十六进制。
-- `applyResolution` 是唯一写文件的 op：再次确认冲突状态 + 路径前缀检查 + 内容/冲突标记校验。
+- `applyResolution` 与 `aiResolve(apply)` 会写文件：写入前再次确认冲突状态 + 路径前缀检查 + 内容/冲突标记校验；大文件按块解析时，全部块成功后才一次性写盘。
 - git 子进程环境清空继承的坏 `GIT_CONFIG_*`，并设置 `GIT_TERMINAL_PROMPT=0`、
   `GIT_PAGER=cat`、`LC_ALL=C`、`GIT_EDITOR=true`，避免交互输入和本地化解析差异。
 - macOS 上如果父进程没有显式代理变量，Host 读取 `scutil --proxy`，把系统

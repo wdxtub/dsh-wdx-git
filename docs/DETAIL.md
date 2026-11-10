@@ -37,12 +37,16 @@ tree: only the checked paths are staged and committed.
 
 ## AI commit messages
 
-Two modes are available. Quick writes one Conventional Commit line. Detailed adds
-the reason, the behavior change, limits, and verification information. The
-default model is the one used by the current session; a different model and
-reasoning effort can be configured in settings. The request contains the diff and
-file list for this commit, plus, in Detailed mode, recent commit titles and the
-selected untracked text files; unchecked files do not appear in the message.
+One request writes both subject and body: a specific Conventional Commit subject, then
+a body at the density of a pull request summary — one sentence of motivation followed
+by 2-4 concrete changes, plus test coverage when the diff touches tests. Replies with a
+broken format (truncated output, a half sentence subject, or a non-trivial change whose
+body is missing, too short or only one sentence) are retried with the reason, up to
+three times; after that a commit-ready fallback message is kept. The default model is
+the one used by the current session; a different model and reasoning effort can be
+configured in settings. The request contains the diff, file list, recent commit titles
+and the selected untracked text files for this commit; unchecked files do not appear in
+the message.
 
 ## Changes, diff, history, and branches
 
@@ -60,9 +64,12 @@ in progress.
 
 When a fetch, merge, rebase, cherry-pick, or revert stops on a conflict, the
 Conflicts tab shows ours and theirs. Take one side, ask AI for a merge suggestion
-(preview only; nothing is written until you confirm), or edit the file and mark
-it resolved. Merge, rebase, cherry-pick, and revert can also be continued or
-aborted from the panel.
+(preview only; nothing is written until you confirm), or use "Resolve all with AI":
+the plugin merges and stages each file in turn, splitting large files into conflict
+regions, and a failed file does not stop the rest. Settings also has "Resolve conflicts
+with AI after sync" (off by default): when enabled, a conflict produced by sync or pull
+is processed immediately without asking. You can also edit a file and mark it resolved,
+or continue/abort a merge, rebase, cherry-pick, or revert from the panel.
 
 ![Conflict resolution](images/conflict.png)
 

@@ -1,6 +1,6 @@
 /**
- * AI helpers: commit-message drafting (quick + detailed), model catalog and
- * conflict resolution suggestions.
+ * AI helpers: commit-message drafting (subject + detailed body, retried until
+ * the format is valid), model catalog and conflict resolution suggestions.
  *
  * The host owns what the model sees (diff, file list, recent commits, branch);
  * a user-supplied prompt can only change *how* the message is written.
@@ -9,36 +9,39 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { GitError, brief } from './git.js'
 
-const QUICK_DIFF_LIMIT = 12000
-const DETAILED_DIFF_LIMIT = 30000
+const COMMIT_DIFF_LIMIT = 30000
 const MAX_UNTRACKED_FILES = 5
 const MAX_UNTRACKED_BYTES = 24000
+const MAX_COMMIT_RETRIES = 3
+const COMMIT_MAX_TOKENS = 1600
+const RETRY_TOKEN_STEP = 600
+const MAX_COMMIT_TOKENS = 3400
+const BODY_REQUIRED_CHANGED_LINES = 5
+const MIN_BODY_CHARS = 60
+const MIN_BODY_UNIT_CHARS = 6
 
-export const QUICK_SYSTEM_PROMPT = [
-  'You write Git commit messages for a software repository.',
-  'Return only the commit message, with no explanation, quotes or code fences.',
+export const COMMIT_SYSTEM_PROMPT = [
+  'You are a senior engineer writing a Git commit message for this repository.',
+  'Return only the commit message: no explanation, quotes, code fences, headings or labels.',
   '',
-  'Format:',
-  '- Subject line: Conventional Commits, e.g. "fix(auth): reject expired sessions". Keep it under 72 characters, imperative, specific, no trailing period.',
-  '- If the change needs motivation, impact or a non-obvious trade-off, add one blank line and a body. Wrap body lines near 72 characters.',
-  '- Do not pad tiny changes with a body.',
-  '- Follow the repository\'s recent commit language and style: recent subjects in Chinese mean a Chinese message; otherwise English.',
-  '- Never claim tests, issues or files that are not visible in the provided diff.',
-].join('\n')
-
-export const DETAILED_SYSTEM_PROMPT = [
-  'You are a senior engineer preparing a commit message that follows the project\'s own conventions.',
-  'Return only the commit message, with no explanation, quotes or code fences.',
-  '',
-  'Think about the change as one coherent commit:',
-  '- Start from the actual diff. Identify the dominant intent and the user-visible behavior change; do not enumerate every file.',
-  '- Reuse the repository\'s format and language. If recent commits use Conventional Commits, use "<type>(<scope>): <subject>" and choose an honest type and scope. If they use plain sentences, follow that.',
-  '- Subject: concrete and specific, under 72 characters, no trailing period. Describe what changed, not "update code".',
-  '- Body: separate with a blank line. Explain why the change is needed, what behavior changes, and any constraints or migration notes. Mention verification (tests, manual checks) only when the provided material shows it.',
-  '- If the changes mix unrelated concerns, summarize the dominant one honestly instead of inventing one theme; do not claim files or effects that are absent.',
-  '- Skip the body for a genuinely tiny change.',
+  'Aim for the information density of a good pull request summary: more than a one-line shorthand, never an essay.',
+  '- Line 1 is the subject: imperative, specific, at most 72 characters, no trailing period.',
+  '- Use Conventional Commits "<type>(<scope>): <subject>" when the recent commits use them; otherwise match the repository\'s plain style.',
+  '- Then one blank line, then a short body: one sentence stating the problem or motivation, followed by 2-4 bullet points naming the concrete changes. Cover interface changes (commands, flags, config keys, exports, protocols, persisted formats) and behavior changes (defaults, output, timing, UI flows) that the diff actually makes.',
+  '- If the diff adds or changes tests, add one bullet saying what they cover. Never claim that tests were run.',
+  '- Ground every sentence in the provided diff and use real file, function or command names. Never claim tests, issues, files or effects that are not visible, and avoid filler such as "update code", "improve logic" or "various fixes".',
+  '- Omit the body only for a genuinely trivial change with no behavioral effect.',
   '',
   'Follow the repository\'s recent commit language: recent subjects in Chinese mean a Chinese message; otherwise English.',
+  '',
+  'Shape (illustrative; do not reuse its content or wording):',
+  'refactor(auth): reject expired sessions before the handler runs',
+  '',
+  'Expired sessions reached the handler and failed with a confusing 500.',
+  '',
+  '- Check expiry in the auth middleware and return 401 with a clear message.',
+  '- Drop the duplicate expiry check from the handler.',
+  '- Extend the session tests with an expired-cookie case.',
 ].join('\n')
 
 /**
@@ -156,12 +159,16 @@ export async function readModelCatalog(llm) {
 /**
  * Generate a commit message.
  *
+ * One request writes subject + body. When the reply is unusable (truncated,
+ * malformed subject, or a substantial change without a body) it is retried up
+ * to MAX_COMMIT_RETRIES times with a corrective instruction. Only after that
+ * does it fall back to a deterministic subject, so the commit can still go out.
+ *
  * @param {{
  *   runGit: (args: string[], options?: any) => Promise<{code: number|null, stdout: string, stderr: string}>,
  *   cwd: string,
  *   llm: any,
  *   selection: {provider: string, model: string, reasoningEffort?: string, label: string},
- *   mode?: 'quick'|'detailed',
  *   hint?: string,
  *   branch?: string,
  *   customPrompt?: string,
@@ -170,10 +177,8 @@ export async function readModelCatalog(llm) {
  */
 export async function draftCommitMessage(options) {
   const { runGit, cwd, llm, selection, signal } = options
-  const mode = options.mode === 'detailed' ? 'detailed' : 'quick'
   const hint = String(options.hint ?? '').slice(0, 500)
   const branch = options.branch || ''
-  const diffLimit = mode === 'detailed' ? DETAILED_DIFF_LIMIT : QUICK_DIFF_LIMIT
   const selected = Array.isArray(options.paths) && options.paths.length > 0 ? options.paths : null
   const pathArgs = selected === null ? [] : ['--', ...selected]
 
@@ -209,7 +214,7 @@ export async function draftCommitMessage(options) {
   }
 
   let untrackedDetail = ''
-  if (mode === 'detailed' && visibleUntracked.length > 0) {
+  if (visibleUntracked.length > 0) {
     const pieces = []
     let budget = MAX_UNTRACKED_BYTES
     for (const path of visibleUntracked.slice(0, MAX_UNTRACKED_FILES)) {
@@ -223,49 +228,137 @@ export async function draftCommitMessage(options) {
   }
 
   const data = buildDataBlock({
-    mode,
     branch,
     recent,
     files: visibleFiles,
     stat,
-    diff: diff.slice(0, diffLimit),
-    diffTruncated: diff.length > diffLimit,
+    diff: diff.slice(0, COMMIT_DIFF_LIMIT),
+    diffTruncated: diff.length > COMMIT_DIFF_LIMIT,
     untrackedDetail,
     hint,
   })
 
   const custom = String(options.customPrompt ?? '').trim().slice(0, 5000)
-  const system = custom !== '' ? custom : (mode === 'detailed' ? DETAILED_SYSTEM_PROMPT : QUICK_SYSTEM_PROMPT)
-  const output = await streamCompletion({
-    llm,
-    selection,
-    system,
-    user: data,
-    maxTokens: mode === 'detailed' ? 1400 : 600,
-    temperature: 0.2,
-    signal,
-  })
+  const system = custom !== '' ? custom : COMMIT_SYSTEM_PROMPT
+  // A custom prompt may deliberately write shorter messages, so only the
+  // built-in prompt enforces a body for substantial changes.
+  const requiresBody = custom === '' && needsDetailedBody({ diff, files: visibleFiles, untrackedDetail })
 
-  const parsed = parseCommitMessage(output.text)
-  if (!looksLikeSubject(parsed.subject, recent)) {
+  let attempts = 0
+  let lastValid = null
+  let lastValidTruncated = false
+  let lastProblem = ''
+  let lastTruncated = false
+  while (attempts <= MAX_COMMIT_RETRIES) {
+    const output = await streamCompletion({
+      llm,
+      selection,
+      system,
+      user: attempts === 0 ? data : `${data}\n\n---\n${retryInstruction(lastProblem)}`,
+      maxTokens: Math.min(MAX_COMMIT_TOKENS, COMMIT_MAX_TOKENS + attempts * RETRY_TOKEN_STEP),
+      temperature: 0.2,
+      signal,
+    })
+    attempts += 1
+    const parsed = parseCommitMessage(output.text)
+    lastTruncated = output.finishKind === 'max-tokens'
+    if (looksLikeSubject(parsed.subject, recent)) {
+      lastValid = parsed
+      lastValidTruncated = lastTruncated
+    }
+    const problem = commitProblem(parsed, { recent, truncated: lastTruncated, requiresBody })
+    if (problem === '') {
+      return {
+        subject: parsed.subject,
+        body: parsed.body,
+        message: parsed.body === '' ? parsed.subject : `${parsed.subject}\n\n${parsed.body}`,
+        model: selection.label,
+        fallback: false,
+        truncated: false,
+        attempts,
+        warning: '',
+      }
+    }
+    lastProblem = problem
+  }
+
+  if (lastValid !== null) {
     return {
-      subject: fallbackSubject(visibleStatus, chinese),
+      subject: lastValid.subject,
       body: '',
-      message: fallbackSubject(visibleStatus, chinese),
+      message: lastValid.subject,
       model: selection.label,
-      fallback: true,
-      truncated: output.finishKind === 'max-tokens',
+      fallback: false,
+      truncated: lastValidTruncated,
+      attempts,
+      warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已只保留标题`,
     }
   }
-  const message = parsed.body === '' ? parsed.subject : `${parsed.subject}\n\n${parsed.body}`
+  const subject = fallbackSubject(visibleStatus, chinese)
   return {
-    subject: parsed.subject,
-    body: parsed.body,
-    message,
+    subject,
+    body: '',
+    message: subject,
     model: selection.label,
-    fallback: false,
-    truncated: output.finishKind === 'max-tokens',
+    fallback: true,
+    truncated: lastTruncated,
+    attempts,
+    warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已使用降级文案`,
   }
+}
+
+function commitProblem(parsed, { recent, truncated, requiresBody }) {
+  if (truncated) return '输出被截断，正文没有写完'
+  if (parsed.subject.trim() === '') return '缺少标题行'
+  if (!looksLikeSubject(parsed.subject, recent)) {
+    return '标题格式不合格：需要一行完整的提交标题，缺 Conventional 前缀、半句话、结尾标点或括号不闭合都不行'
+  }
+  if (requiresBody && bodyChars(parsed.body) < MIN_BODY_CHARS) {
+    return '缺少足够的正文：需要一句说明动机，再用 2-4 条要点写清具体改了什么、为什么'
+  }
+  if (requiresBody) {
+    const quality = bodyQualityProblem(parsed.body)
+    if (quality !== '') return quality
+  }
+  return ''
+}
+
+/** Reject a substantial change whose body is only one short thought. */
+function bodyQualityProblem(body) {
+  const units = String(body ?? '')
+    .split(/\n+|[。！？!?；;]+|\.\s+/)
+    .map((unit) => unit.trim())
+    .filter((unit) => unit.length >= MIN_BODY_UNIT_CHARS)
+  if (units.length < 2) {
+    return '正文只有一句话：需要先说明动机，再列 2-4 条具体改动（涉及测试时补一条覆盖范围）'
+  }
+  return ''
+}
+
+function retryInstruction(problem) {
+  return [
+    `Your previous reply was rejected: ${problem}.`,
+    'Reply again with ONLY the commit message in this exact shape:',
+    '- one subject line (at most 72 characters, no trailing period),',
+    '- one blank line,',
+    '- one sentence of motivation, then 2-4 concrete bullet points (interface changes, behavior changes, and test coverage when the diff touches tests) taken from the diff above.',
+    'No preamble, no quotes, no code fences, no markdown headings.',
+  ].join('\n')
+}
+
+function needsDetailedBody({ diff, files, untrackedDetail }) {
+  const changedLines = String(diff ?? '')
+    .split('\n')
+    .filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line))
+    .length
+  if (changedLines >= BODY_REQUIRED_CHANGED_LINES) return true
+  if (files.length >= 2) return true
+  if (String(untrackedDetail).length >= 200) return true
+  return false
+}
+
+function bodyChars(body) {
+  return String(body ?? '').replace(/\s+/g, '').length
 }
 
 function buildDataBlock(input) {
@@ -293,10 +386,8 @@ function buildDataBlock(input) {
     parts.push('```diff', input.diff, '```')
     if (input.diffTruncated) parts.push('(diff truncated)')
   }
-  if (input.mode === 'detailed') {
-    parts.push('')
-    parts.push('Write the message now. Prefer a specific subject; add a body only when it carries real information.')
-  }
+  parts.push('')
+  parts.push('Write the commit message now: subject line, one blank line, then a compact PR-style body — one sentence of motivation plus 2-4 concrete change bullets. Skip the body only for a truly trivial change.')
   return parts.join('\n')
 }
 
@@ -455,8 +546,19 @@ async function streamCompletion({ llm, selection, system, user, maxTokens, tempe
   return { text, finishKind }
 }
 
+const CONFLICT_INPUT_LIMIT = 240000
+const CONFLICT_MERGED_LIMIT = 12000
+const CONFLICT_HUNK_LIMIT = 24000
+const CONFLICT_MAX_HUNKS = 40
+const CONFLICT_CONTEXT_LINES = 20
+
 /**
  * Ask the model for a merged file. Does not write anything.
+ *
+ * Large files are not sent whole: the working-tree merge result is split into
+ * conflict regions and each region is resolved with its surrounding context,
+ * because a full-file reply would exceed the output budget.
+ *
  * @param {{
  *   llm: any,
  *   selection: {provider: string, model: string, reasoningEffort?: string, label: string},
@@ -464,6 +566,7 @@ async function streamCompletion({ llm, selection, system, user, maxTokens, tempe
  *   base: string|null,
  *   ours: string,
  *   theirs: string,
+ *   merged?: string,
  *   oursDeleted: boolean,
  *   theirsDeleted: boolean,
  *   branch: string,
@@ -474,8 +577,13 @@ async function streamCompletion({ llm, selection, system, user, maxTokens, tempe
  */
 export async function suggestConflictResolution(input) {
   const total = input.ours.length + input.theirs.length + (input.base?.length ?? 0)
-  if (total > 240000) {
-    throw new GitError('冲突文件过大（三份内容合计超过 240000 字符），请手动解决', { code: 'invalid-params' })
+  const merged = typeof input.merged === 'string' ? input.merged : ''
+  if (total > CONFLICT_INPUT_LIMIT || merged.length > CONFLICT_MERGED_LIMIT) {
+    if (hasConflictMarkers(merged)) return await resolveConflictByHunks(input, merged)
+    throw new GitError(
+      `冲突文件过大（三份内容合计 ${total} 字符，合并结果 ${merged.length} 字符），且没有可解析的冲突块，请手动解决`,
+      { code: 'invalid-params' },
+    )
   }
   const system = [
     'You merge two versions of one file during a Git merge.',
@@ -514,12 +622,162 @@ export async function suggestConflictResolution(input) {
     throw new GitError('模型输出被截断，未写入任何内容。请重试或手动解决。', { code: 'ai-unavailable' })
   }
   const cleaned = stripFences(output.text).replace(/\r\n/g, '\n').trim()
-  if (/^<<<DELETE_FILE>>>$/m.test(cleaned)) return { delete: true, content: null, model: input.selection.label }
+  if (/^<<<DELETE_FILE>>>$/m.test(cleaned)) {
+    return { delete: true, content: null, model: input.selection.label, route: 'whole' }
+  }
   if (cleaned === '') throw new GitError('模型返回了空内容，未写入任何内容', { code: 'ai-unavailable' })
   if (hasConflictMarkers(cleaned)) {
     throw new GitError('模型返回的内容仍包含冲突标记，已拒绝写入', { code: 'ai-unavailable' })
   }
-  return { delete: false, content: cleaned, model: input.selection.label }
+  return { delete: false, content: cleaned, model: input.selection.label, route: 'whole' }
+}
+
+const CONFLICT_HUNK_SYSTEM_PROMPT = [
+  'You resolve one conflict region of a file during a Git merge.',
+  'Output ONLY the replacement lines for this region. No explanation, quotes, code fences or conflict markers.',
+  'Keep the valuable changes from both sides, preserve indentation and the surrounding style, and do not duplicate lines that both sides share.',
+  'Do not invent code that neither side contains; keep the surrounding context intact.',
+  'If the correct resolution removes the whole region, output exactly one line: <<<EMPTY_REGION>>>',
+].join('\n')
+
+/** Find conflict regions in a worktree merge result, or null when malformed. */
+function findConflictRegions(text) {
+  const lines = String(text ?? '').split('\n')
+  const regions = []
+  let index = 0
+  while (index < lines.length) {
+    if (!/^<{7}(\s|$)/.test(lines[index])) {
+      index += 1
+      continue
+    }
+    const start = index
+    let base = -1
+    let mid = -1
+    let end = -1
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor]
+      if (/^<{7}(\s|$)/.test(line)) return null
+      if (mid === -1 && /^\|{7}(\s|$)/.test(line)) { base = cursor; continue }
+      if (mid === -1 && /^={7}(\s|$)/.test(line)) { mid = cursor; continue }
+      if (mid !== -1 && /^>{7}(\s|$)/.test(line)) { end = cursor; break }
+    }
+    if (mid === -1 || end === -1) return null
+    regions.push({ start, base, mid, end })
+    index = end + 1
+  }
+  return regions
+}
+
+/** Resolve each conflict region separately, then splice the replacements in. */
+async function resolveConflictByHunks(input, merged) {
+  const regions = findConflictRegions(merged)
+  if (regions === null) {
+    throw new GitError('无法解析冲突标记，请手动解决', { code: 'invalid-params' })
+  }
+  if (regions.length === 0) {
+    throw new GitError('没有找到可自动解决的冲突块，请手动解决', { code: 'invalid-params' })
+  }
+  if (regions.length > CONFLICT_MAX_HUNKS) {
+    throw new GitError(`冲突块过多（${regions.length} 个），请手动解决或分批处理`, { code: 'invalid-params' })
+  }
+  const lines = merged.split('\n')
+  const replacements = []
+  for (let index = 0; index < regions.length; index += 1) {
+    const region = regions[index]
+    const ours = lines.slice(region.start + 1, region.mid).join('\n')
+    const theirs = lines.slice(region.mid + 1, region.end).join('\n')
+    const base = region.base === -1 ? null : lines.slice(region.base + 1, region.mid).join('\n')
+    const size = ours.length + theirs.length + (base === null ? 0 : base.length)
+    if (size > CONFLICT_HUNK_LIMIT) {
+      throw new GitError(`第 ${index + 1} 个冲突块过大（${size} 字符），请手动解决`, { code: 'invalid-params' })
+    }
+    const previousEnd = index === 0 ? 0 : regions[index - 1].end + 1
+    const nextStart = index === regions.length - 1 ? lines.length : regions[index + 1].start
+    const contextBefore = lines.slice(
+      Math.max(previousEnd, region.start - CONFLICT_CONTEXT_LINES),
+      region.start,
+    )
+    const contextAfter = lines.slice(
+      region.end + 1,
+      Math.min(nextStart, region.end + 1 + CONFLICT_CONTEXT_LINES),
+    )
+    const output = await streamCompletion({
+      llm: input.llm,
+      selection: input.selection,
+      system: CONFLICT_HUNK_SYSTEM_PROMPT,
+      user: buildHunkPrompt(input, {
+        ours, theirs, base, contextBefore, contextAfter,
+      }),
+      maxTokens: Math.min(8000, Math.max(1200, Math.ceil(size / 2) + 600)),
+      temperature: 0.1,
+      signal: input.signal,
+    })
+    if (output.finishKind === 'max-tokens') {
+      throw new GitError(`第 ${index + 1} 个冲突块的输出被截断，未写入任何内容`, { code: 'ai-unavailable' })
+    }
+    replacements.push(cleanHunkOutput(output.text, index))
+  }
+  const assembled = []
+  let cursor = 0
+  for (let index = 0; index < regions.length; index += 1) {
+    const region = regions[index]
+    assembled.push(...lines.slice(cursor, region.start))
+    if (replacements[index] !== '') assembled.push(...replacements[index].split('\n'))
+    cursor = region.end + 1
+  }
+  assembled.push(...lines.slice(cursor))
+  const content = assembled.join('\n')
+  if (content.trim() === '') {
+    throw new GitError('合并结果为空，未写入任何内容；如应删除该文件，请手动删除', { code: 'ai-unavailable' })
+  }
+  if (hasConflictMarkers(content)) {
+    throw new GitError('合并结果仍包含冲突标记，已拒绝写入', { code: 'ai-unavailable' })
+  }
+  return {
+    delete: false,
+    content,
+    model: input.selection.label,
+    route: 'hunks',
+    hunks: regions.length,
+  }
+}
+
+function buildHunkPrompt(input, hunk) {
+  const parts = [
+    `Path: ${input.path}`,
+    `Current branch: ${input.branch || '(unknown)'}`,
+    `Incoming branch/ref: ${input.incoming || '(unknown)'}`,
+    '',
+    input.hint ? `Extra context from the user: ${input.hint}` : '',
+    '',
+  ]
+  if (hunk.contextBefore.length > 0) {
+    parts.push('=== LINES BEFORE THE CONFLICT ===', clip(hunk.contextBefore.join('\n'), 4000), '')
+  }
+  parts.push('=== CURRENT BRANCH (ours) ===', clip(hunk.ours, CONFLICT_HUNK_LIMIT))
+  if (hunk.base !== null) {
+    parts.push('', '=== COMMON ANCESTOR (base) ===', clip(hunk.base, CONFLICT_HUNK_LIMIT))
+  }
+  parts.push('', '=== INCOMING SIDE (theirs) ===', clip(hunk.theirs, CONFLICT_HUNK_LIMIT))
+  if (hunk.contextAfter.length > 0) {
+    parts.push('', '=== LINES AFTER THE CONFLICT ===', clip(hunk.contextAfter.join('\n'), 4000))
+  }
+  return parts.join('\n')
+}
+
+function cleanHunkOutput(text, index) {
+  let value = stripFences(String(text ?? '')).replace(/\r\n/g, '\n')
+  value = value.replace(/^\n+/, '').replace(/\n+$/, '')
+  if (value.trim() === '') {
+    throw new GitError(`模型没有给出第 ${index + 1} 个冲突块的内容，未写入任何内容`, { code: 'ai-unavailable' })
+  }
+  if (value.split('\n').map((line) => line.trim()).filter(Boolean).every((line) => line === '<<<EMPTY_REGION>>>')) {
+    return ''
+  }
+  if (hasConflictMarkers(value)) {
+    throw new GitError(`第 ${index + 1} 个冲突块的结果仍包含冲突标记，已拒绝写入`, { code: 'ai-unavailable' })
+  }
+  return value
 }
 
 function clip(text, max) {

@@ -1135,7 +1135,7 @@ window.__FIXTURES__ = {
     "message": "feat(sync): replace pull and push with one sync action\n\nFetch, fast-forward or merge, then push. Local edits are auto-stashed during the merge and restored afterwards.",
     "model": "magpie/baidu-qianfan/deepseek-v4.1-flash",
     "fallback": false,
-    "mode": "quick",
+    "attempts": 1,
     "effort": "low",
     "warning": ""
   },

@@ -35,6 +35,7 @@ const WRITE_TIMEOUT = 60000
 const NETWORK_TIMEOUT = 240000
 const SYNC_TIMEOUT = 420000
 const AI_TIMEOUT = 150000
+const RESOLVE_AI_TIMEOUT = 360000
 const DIFF_MAX_CHARS = 400000
 const COMMIT_PROMPT_KEY = 'wdx.git.commitPrompt'
 const COMMIT_PROMPT_MAX = 5000
@@ -124,6 +125,7 @@ export function createOperations(deps) {
     network: NETWORK_TIMEOUT,
     sync: SYNC_TIMEOUT,
     ai: AI_TIMEOUT,
+    resolveAi: RESOLVE_AI_TIMEOUT,
     ...(deps.timeouts ?? {}),
   }
   let catalogCache = null
@@ -859,7 +861,6 @@ export function createOperations(deps) {
   async function aiCommit(params, signal) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
-    const mode = params.mode === 'detailed' ? 'detailed' : 'quick'
     const hint = typeof params.hint === 'string' ? params.hint.slice(0, 500) : ''
     const selectedPaths = params.paths === undefined ? null : assertPaths(params.paths)
     const promptRaw = await runGit(['config', '--get', COMMIT_PROMPT_KEY], {
@@ -875,14 +876,14 @@ export function createOperations(deps) {
         cwd: root,
         llm: resolved.llm,
         selection: resolved.selection,
-        mode,
         hint,
         branch,
         paths: selectedPaths || undefined,
         customPrompt: promptRaw.code === 0 ? promptRaw.stdout : '',
         signal,
       })
-      return { ...result, mode, effort: resolved.selection.reasoningEffort ?? null, warning: resolved.warning }
+      const warning = [resolved.warning, result.warning].filter(Boolean).join('；')
+      return { ...result, effort: resolved.selection.reasoningEffort ?? null, warning }
     } catch (error) {
       if (error?.code !== 'ai-unavailable') throw error
       const status = await readStatus(root, signal)
@@ -902,7 +903,7 @@ export function createOperations(deps) {
         model: null,
         fallback: true,
         truncated: false,
-        mode,
+        attempts: 0,
         effort: null,
         warning: `AI 不可用，已生成降级文案：${brief(error?.message ?? error, 300)}`,
       }
@@ -939,6 +940,7 @@ export function createOperations(deps) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
     const path = assertRelPath(params.path)
+    const apply = params.apply === true
     const hint = typeof params.hint === 'string' ? params.hint.slice(0, 500) : ''
     const info = await loadConflict(root, path, signal)
     const oursDeleted = !info.stages[2]
@@ -949,10 +951,23 @@ export function createOperations(deps) {
       || (theirsDeleted && unchanged(info.ours))
       || (oursDeleted && unchanged(info.theirs))
     if (deleteOnly) {
+      if (apply) {
+        await deleteConflictFile(root, path, signal)
+        return {
+          path, resolved: true, deleted: true, deterministic: true, model: null, route: 'deterministic',
+          unmerged: await unmergedCount(root, signal),
+        }
+      }
       return {
         path, suggested: null, delete: true, deterministic: true, model: null,
         hasBase, oursExists: !oursDeleted, theirsExists: !theirsDeleted,
       }
+    }
+    let merged = ''
+    try {
+      merged = await readFile(join(root, path), 'utf8')
+    } catch {
+      merged = ''
     }
     const resolved = await selectionFor(params, signal)
     const result = await suggestConflictResolution({
@@ -962,6 +977,7 @@ export function createOperations(deps) {
       base: info.base,
       ours: info.ours,
       theirs: info.theirs,
+      merged,
       oursDeleted,
       theirsDeleted,
       branch: await currentBranch(root, signal),
@@ -969,12 +985,32 @@ export function createOperations(deps) {
       hint,
       signal,
     })
+    if (apply) {
+      if (result.delete) {
+        await deleteConflictFile(root, path, signal)
+        return {
+          path, resolved: true, deleted: true, deterministic: false, model: result.model,
+          route: result.route ?? 'whole',
+          ...(result.hunks === undefined ? {} : { hunks: result.hunks }), warning: resolved.warning,
+          unmerged: await unmergedCount(root, signal),
+        }
+      }
+      await writeResolution(root, path, result.content, signal)
+      return {
+        path, resolved: true, deleted: false, deterministic: false, model: result.model,
+        route: result.route ?? 'whole',
+        ...(result.hunks === undefined ? {} : { hunks: result.hunks }), warning: resolved.warning,
+        unmerged: await unmergedCount(root, signal),
+      }
+    }
     return {
       path,
       suggested: result.content,
       delete: result.delete,
       deterministic: false,
       model: result.model,
+      route: result.route ?? 'whole',
+      ...(result.hunks === undefined ? {} : { hunks: result.hunks }),
       hasBase,
       oursExists: !oursDeleted,
       theirsExists: !theirsDeleted,
@@ -982,18 +1018,13 @@ export function createOperations(deps) {
     }
   }
 
-  async function applyResolution(params, signal) {
-    const cwd = assertCwd(params.cwd)
-    const root = await requireRepo(cwd, signal)
-    const path = assertRelPath(params.path)
-    await loadConflict(root, path, signal)
-    if (params.delete === true) {
-      await runGit(['rm', '-f', '--ignore-unmatch', '--', path], {
-        cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true,
-      })
-      return { path, resolved: true, deleted: true, unmerged: await unmergedCount(root, signal) }
-    }
-    const content = params.content
+  async function deleteConflictFile(root, path, signal) {
+    await runGit(['rm', '-f', '--ignore-unmatch', '--', path], {
+      cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true,
+    })
+  }
+
+  async function writeResolution(root, path, content, signal) {
     if (typeof content !== 'string' || content.trim() === '') {
       throw new GitError('content 不能为空', { code: 'invalid-params' })
     }
@@ -1010,6 +1041,18 @@ export function createOperations(deps) {
     }
     await writeFileImpl(absolute, content, 'utf8')
     await runGit(['add', '--', path], { cwd: root, signal, timeoutMs: timeouts.write })
+  }
+
+  async function applyResolution(params, signal) {
+    const cwd = assertCwd(params.cwd)
+    const root = await requireRepo(cwd, signal)
+    const path = assertRelPath(params.path)
+    await loadConflict(root, path, signal)
+    if (params.delete === true) {
+      await deleteConflictFile(root, path, signal)
+      return { path, resolved: true, deleted: true, unmerged: await unmergedCount(root, signal) }
+    }
+    await writeResolution(root, path, params.content, signal)
     return { path, resolved: true, deleted: false, unmerged: await unmergedCount(root, signal) }
   }
 
@@ -1131,9 +1174,11 @@ export function createOperations(deps) {
       ? timeouts.sync
       : op === 'fetch'
         ? timeouts.network
-        : op === 'aiCommit' || op === 'aiResolve'
+        : op === 'aiCommit'
           ? timeouts.ai
-          : op === 'stage' || op === 'unstage' || op === 'discard' || op === 'commit'
+          : op === 'aiResolve'
+            ? timeouts.resolveAi
+            : op === 'stage' || op === 'unstage' || op === 'discard' || op === 'commit'
             || op === 'switchBranch' || op === 'createBranch' || op === 'deleteBranch'
             || op === 'stashPush' || op === 'stashPop' || op === 'stashDrop'
             || op === 'applyResolution' || op === 'takeSide' || op === 'markResolved'
