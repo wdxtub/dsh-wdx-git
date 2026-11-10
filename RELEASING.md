@@ -35,12 +35,16 @@ npm pack --dry-run
 npm pack
 # 插件页 → 添加插件 → 输入 tarball 的绝对路径 → 安装 → 立即启用
 
-npm publish --access public --registry=https://registry.npmjs.org/
+npm run release
 git tag -a v0.1.0 -m "v0.1.0"
 git push origin main --tags
 ```
 
-`publishConfig` 已指向 npm 官方源，但显式带 `--registry` 可以避免本机镜像配置干扰。
+`npm run release` 会做完整流程：检查工作区 / 版本、跑测试、必要时打开浏览器登录，
+发布时再打开 2FA 认证页并等待你在浏览器完成验证，最后等 registry 同步。
+不想发布时先跑 `npm run release -- --check` 只做预检。
+
+`publishConfig` 已指向 npm 官方源，脚本也显式带 `--registry`，不受本机镜像配置影响。
 先发 npm 再打 tag 也可以；tag 只是标记发布对应的代码。
 
 发布后验证：
@@ -60,13 +64,15 @@ npm view dsh-wdx-git version --registry=https://registry.npmjs.org/
 ```bash
 git status                       # 必须干净
 # 先更新 CHANGELOG.md，并提交它
-npm test
 npm version patch -m "chore: release v%s"
-npm publish --access public --registry=https://registry.npmjs.org/
+npm run release -- --check       # 可选：先预检
+npm run release                  # 浏览器 2FA → 发布 → 等 registry
 git push --follow-tags
 ```
 
 `npm version` 会更新 `package.json`、创建 release commit 和 `vX.Y.Z` tag。
+`npm run release` 不自动 commit / tag / push；发布后如需补 tag，再执行
+`git tag -a vX.Y.Z -m "vX.Y.Z"`。
 在 GitHub 上基于该 tag 建 Release，把 `CHANGELOG.md` 对应段落贴进去即可。
 如果 `npm version` 因工作区不干净失败，先提交 CHANGELOG 等改动再重试。
 

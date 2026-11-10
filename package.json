@@ -47,7 +47,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "release": "bash scripts/publish-npm.sh"
   },
   "license": "MIT",
   "keywords": [

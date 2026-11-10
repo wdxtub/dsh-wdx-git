@@ -33,34 +33,38 @@
 
 4. 工作区要干净（`git status`）。`npm version` 依赖这一点。
 
-## 发布：使用浏览器 2FA（本仓库的固定方式）
+## 发布：`npm run release`（本仓库的固定方式）
 
-**不要**直接非交互运行 `npm publish`：stdin 不是 TTY 时会抛 `EOTP`，而且错误里的
-auth URL 会被打码，无法继续。
-
-用 PTY + expect 启动发布。脚本会打印认证 URL，停一下等 npm 打开浏览器；按回车后
-浏览器打开 npm 认证页，用户完成 2FA/Passkey，npm 自动取到 OTP 并完成发布。
-
-仓库自带脚本 `scripts/publish-npm.exp`，直接运行：
+发布走浏览器 2FA，不收集 OTP。整条流程固定在 `scripts/publish-npm.sh`：
 
 ```bash
-expect scripts/publish-npm.exp > /tmp/npm-publish-pty.log 2>&1 &
-tail -f /tmp/npm-publish-pty.log
+npm run release -- --check   # 预检：工作区、版本、测试、打包、登录
+npm run release              # 登录（如需要）→ 浏览器验证 → 发布 → 等 registry 同步
 ```
 
-脚本用 `exp_continue` 持续读到 EOF，再按 npm 退出码和是否看到 `+ dsh-wdx-git`
-判定成功，不会在 npm 退出瞬间误报 `spawn id ... not open`。
+`npm run release` 会：
+
+1. 要求工作区干净，并确认 `package.json` 版本尚未发布；
+2. 跑 `npm test` 和 `npm pack --dry-run`；
+3. `npm whoami` 失败时，用浏览器登录并等待用户完成验证；
+4. 用 PTY 跑 `npm publish`；看到 `Press ENTER` 自动回车并打印认证 URL，
+   等待用户在浏览器完成 2FA/Passkey，然后自动继续；
+5. 认证类失败（401 / E401 / EOTP）自动重新登录并重试一次；
+6. 轮询 registry 直到该版本和 `dist-tags.latest` 都能查到，再打印 tarball。
+
+脚本不 commit、不 tag、不 push；这些仍由你确认后执行。
 
 关键点：
 
-- 必须给 PTY；`expect` 的 `spawn` 提供它。不要用 `printf '\n' | script ...`，
-  输入可能在提示出现前就 EOF，npm 会卡在 “Press ENTER”。
-- 脚本只匹配 `Press ENTER` / `+ dsh-wdx-git` / `Published` / `npm error`；
-  不要匹配泛化的 `error`，测试输出里有测试名带 “error”，会误杀发布。
-- 看到 `AUTH_BROWSER_OPENED` 后，等用户在浏览器完成认证。不要重复启动另一个发布。
-- 如果浏览器没打开，从日志里取出 `https://www.npmjs.com/auth/cli/...` 让用户手动打开。
-- 发布成功后日志里会有类似 `+ dsh-wdx-git` 的 npm 回执和 `PUBLISH_DONE`。
-- 新包第一次会出现 `0.0.0-stage` 占位；等约 60 秒，`dist-tags.latest` 才会指向正式版本。
+- 不要直接非交互运行 `npm publish`：stdin 不是 TTY 时会抛 `EOTP`，auth URL 会被打码。
+- 必须给 PTY；`expect` 的 `spawn` 提供它。`scripts/publish-npm.exp` 只匹配
+  `Press ENTER` / `+ <包名>@<版本>` / `Published` / `npm error`，不会误杀测试输出。
+- 看到 `AUTH_BROWSER_OPENED` / `LOGIN_BROWSER_OPENED` 后，等用户在浏览器完成认证；
+  不要另起一个发布进程。
+- 如果浏览器没自动打开，从脚本输出里取出 `https://www.npmjs.com/auth/cli/...`
+  或 `https://www.npmjs.com/login?...` 让用户手动打开。
+- 发布成功后脚本会等 registry 同步；新包第一次可能出现 `0.0.0-stage` 占位。
+- `--check` 在版本已发布时会给出警告并继续检查，便于发布后复验环境。
 
 > 2FA 验证码在用户自己的验证器 App 里（1Password / Google Authenticator / Authy 等），
 > npm 不会发短信/邮件。不要向用户索要验证码；优先走浏览器认证。只有用户主动提供
