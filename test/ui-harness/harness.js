@@ -2,6 +2,7 @@
   var params = new URLSearchParams(location.search)
   var narrow = params.has('narrow')
   var conflictMode = params.has('conflict')
+  var slowOverview = params.has('slow')
   var syncConflict = params.has('syncConflict')
   var stage = document.getElementById('stage')
   if (narrow) stage.classList.add('narrow')
@@ -21,8 +22,31 @@
     })
   }
 
+  var workspaces = {
+    items: [
+      { workspaceId: 'ws-git', path: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', title: 'dsh-wdx-git', sessionIds: [] },
+      { workspaceId: 'ws-blog', path: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', title: 'wdxtub-blog', sessionIds: [] },
+      { workspaceId: 'ws-notes', path: '/Users/wdxtub/Documents/notes', title: 'notes', sessionIds: [] },
+    ],
+    archivedSessionIds: [],
+    pinnedSessionIds: [],
+    state: 'ready',
+    phase: 'ready',
+    error: null,
+  }
   var ctx = {
     effect: function (fn) { try { return fn() } catch (error) { console.error(error) } },
+    get: function (name) {
+      if (name === 'workspaces') {
+        return {
+          list: {
+            getSnapshot: function () { return workspaces },
+            subscribe: function () { return function () {} },
+          },
+        }
+      }
+      return null
+    },
     locale: {
       register: function (ns, dicts) { dictionaries = dicts },
       bind: function () {
@@ -69,6 +93,17 @@
     var request = JSON.parse(options.body || '{}')
     var op = request.op
     await delay(op === 'aiCommit' || op === 'aiResolve' ? 650 : 90)
+    if (op === 'overview') {
+      if (slowOverview) await delay(1400)
+      return ok({
+        at: Date.now(),
+        repos: [
+          { path: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', name: 'dsh-wdx-git', branch: 'main', detached: false, upstream: 'origin/main', ahead: 0, behind: 0, changed: 2, clean: false, staged: 0, unstaged: 1, untracked: 1, conflicted: 0, error: null },
+          { path: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', name: 'wdxtub-blog', branch: 'draft/global-git', detached: false, upstream: 'origin/draft/global-git', ahead: 2, behind: 1, changed: 0, clean: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 0, error: null },
+          { path: '/Users/wdxtub/Documents/notes', isRepo: false, error: 'not a git repository', code: 'not-a-repo' },
+        ],
+      })
+    }
     if (op === 'snapshot') return ok(snapshot)
     if (op === 'graph') return ok(fixtures.graph)
     if (op === 'models') return ok(fixtures.models)
@@ -138,12 +173,19 @@
   })
   plugin.apply(ctx)
 
-  var Body = registered['sidebar.right.pane.tab:wdx-git']
+  var global = params.has('global')
+  var Body = registered[global ? 'main:wdx-git-global' : 'sidebar.right.pane.tab:wdx-git']
   if (!Body) {
-    document.getElementById('stage').textContent = 'tab body was not registered'
+    document.getElementById('stage').textContent = 'panel body was not registered'
     return
   }
   var root = ReactDOM.createRoot(stage)
-  root.render(React.createElement(Body, { sessionId: 'session-1' }))
+  root.render(React.createElement(Body, global ? {} : { sessionId: 'session-1' }))
+  if (params.has('autoRefresh')) {
+    setTimeout(function () {
+      var button = document.querySelector('.wx-global-refresh')
+      if (button) button.click()
+    }, 900)
+  }
   setTimeout(function () { window.__READY__ = true }, 700)
 })()

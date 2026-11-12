@@ -1,7 +1,7 @@
 {
   "name": "dsh-wdx-git",
   "version": "0.1.5",
-  "description": "Git, inside your AI session: one sync button that becomes Fetch/Pull/Push/Sync, a default-selected commit tab, default-checked changes, history, branches, conflict resolution and AI commit messages for DSH.",
+  "description": "Git across your AI sessions: a session panel plus a global repository page for every workspace, one sync button that becomes Fetch/Pull/Push/Sync, a default-selected commit tab, default-checked changes, history, branches, conflict resolution and AI commit messages for DSH.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -41,7 +41,8 @@
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-api-workspace-controller"
       ]
     }
   },

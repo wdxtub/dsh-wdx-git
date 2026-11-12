@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "WDX Git",
-    "description": "把 Git 留在 AI 会话里：同步按钮按状态显示 Fetch / Pull / Push / Sync，提交页默认打开、改动默认全选，AI 顺手写好提交信息。",
+    "description": "把 Git 留在 AI 会话里：右侧栏管当前会话，左侧栏全局页列出所有工作区；同步按钮按状态显示 Fetch / Pull / Push / Sync，提交页默认打开、改动默认全选，AI 顺手写好提交信息。",
     "detail": "docs/DETAIL.zh.md"
   }
 }

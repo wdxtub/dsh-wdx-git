@@ -2,7 +2,8 @@
 
 **Git，不再打断你的 AI 会话。**
 
-WDX Git 是 DeepSeek Harness 右侧栏里的 Git 面板。AI 改完代码，你不需要切到终端，
+WDX Git 是 DeepSeek Harness 里的 Git 面板：右栏管当前会话的仓库，左侧栏的全局页
+一次列出所有工作区。AI 改完代码，你不需要切到终端，
 也不需要在一排 Pull / Push / Fetch 按钮里做选择：一个同步按钮完成拉取、合并和推送，
 并会按仓库状态显示 **Fetch origin / Pull origin / Push origin / Publish branch / Sync**；
 提交页默认打开，改动默认全选；提交信息可以让 AI 顺手写好。
@@ -97,6 +98,13 @@ AI 只负责生成内容。提交、推送和冲突文件的写入，都在你�
 
 ## 还有这些
 
+- **跨项目仓库页**：左侧栏的 **Git** 入口列出当前 DSH 里所有工作区，像 GitHub Desktop
+  一样按父目录分组，显示分支、ahead/behind 和改动数；点开任意仓库就能直接提交，不必先
+  进项目新建会话。概览每 30 秒刷新一次；手动刷新时按钮会旋转，完成后显示绿色对勾和
+  更新结果，有变化的仓库行会短暂高亮。
+
+![跨项目仓库页](assets/screenshots/08-global.png)
+
 - **一体化界面**：顶栏、tab、内容共用一层背景，没有卡片和外框；颜色全部来自
   DSH 主题 token，深浅主题自动适配。
 - **变更、历史、分支、差异**：逐文件查看、提交搜索、所有分支 / 当前分支切换、
@@ -133,10 +141,11 @@ git clone https://github.com/wdxtub/dsh-wdx-git.git
 dsh plugin --profile desktop add ./dsh-wdx-git
 ```
 
-安装后刷新页面。入口有两个：
+安装后刷新页面。入口有三个：
 
-1. 会话头部工具栏的 **Git 分支图标**；
-2. 右栏的 **+ → 开始** →「WDX Git」。
+1. 左侧栏的 **Git**（全局仓库页）；
+2. 会话头部工具栏的 **Git 分支图标**；
+3. 右栏的 **+ → 开始** →「WDX Git」。
 
 > 更新了 Host 代码（`index.js` / `src/`）后，重开一次 DSH 让 Host 重新加载；
 > 只刷新页面只会更新客户端。
@@ -202,7 +211,7 @@ A：交互灵感来自 GitHub Desktop，但这是为 DSH 会话重新设计的�
 - RPC、数据结构和 Host ↔ Client 契约：[PROTOCOL.md](PROTOCOL.md)
 - 版本记录：[CHANGELOG.md](CHANGELOG.md)
 - 发布流程：[RELEASING.md](RELEASING.md)
-- 运行测试：`npm test`（当前 45 个测试）
+- 运行测试：`npm test`（当前 55 个测试）
 - 实现：Host 侧 `index.js` / `src/`，客户端单文件 `lib/client.js`，无构建步骤。
 
 ## License

@@ -67,6 +67,46 @@ test('snapshot, staging, diff, auto-stage commit and history work on a real repo
   assert.ok(currentOnly.commits.length >= 2)
 })
 
+test('overview summarizes every workspace without failing on non-repositories', async (t) => {
+  const env = await createRepo()
+  const other = await createRepo()
+  const plain = await tempDir()
+  t.after(() => cleanup(env.base))
+  t.after(() => cleanup(other.base))
+  t.after(() => cleanup(plain))
+
+  await write(env.repo, 'a.txt', 'a\n')
+  await write(env.repo, 'b.txt', 'b\n')
+  await write(other.repo, 'README.md', '# changed\n')
+
+  const operations = createOperations({ exec })
+  const result = await operations.handle('overview', {
+    paths: [env.repo, other.repo, plain, '/definitely/not/here'],
+  })
+
+  assert.equal(result.repos.length, 4)
+  const main = result.repos.find((row) => row.path === env.repo)
+  assert.equal(main.isRepo, true)
+  assert.equal(main.name, 'repo')
+  assert.equal(main.branch, 'main')
+  assert.equal(main.changed, 2)
+  assert.equal(main.clean, false)
+  assert.equal(main.ahead, 0)
+
+  const modified = result.repos.find((row) => row.path === other.repo)
+  assert.equal(modified.isRepo, true)
+  assert.equal(modified.changed, 1)
+  assert.equal(modified.clean, false)
+
+  const nonRepo = result.repos.find((row) => row.path === plain)
+  assert.equal(nonRepo.isRepo, false)
+  assert.ok(nonRepo.error)
+
+  const missing = result.repos.find((row) => row.path === '/definitely/not/here')
+  assert.equal(missing.isRepo, false)
+  assert.ok(missing.error)
+})
+
 test('branches, stash and discard run against real git state', async (t) => {
   const env = await createRepo()
   t.after(() => cleanup(env.base))

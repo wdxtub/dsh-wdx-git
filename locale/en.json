@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "WDX Git",
-    "description": "Git, inside your AI session: a sync button that becomes Fetch / Pull / Push / Sync, a default-selected commit tab, default-checked changes, and AI-written commit messages.",
+    "description": "Git for your AI sessions: a session panel plus a global repository page for every workspace, a sync button that becomes Fetch / Pull / Push / Sync, a default-selected commit tab, default-checked changes, and AI-written commit messages.",
     "detail": "docs/DETAIL.md"
   }
 }

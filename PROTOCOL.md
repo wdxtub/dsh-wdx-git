@@ -82,7 +82,47 @@ content-type: application/json
 
 ## 3. 数据结构
 
-### 3.1 `snapshot` — 面板全量状态
+### 3.1 `overview` — 跨项目仓库列表
+
+参数：`{ paths: string[] }`（1..128 个绝对路径，重复项自动去重）
+
+返回按输入顺序排列的仓库数组。单个路径失败不会影响整批；工作区路径由 Client
+从 `ctx.workspaces.list` 提供，Host 不自行扫描目录。
+
+```json
+{
+  "at": 1720000000000,
+  "repos": [{
+    "path": "/abs/work",
+    "isRepo": true,
+    "root": "/abs/work",
+    "name": "work",
+    "branch": "main",
+    "detached": false,
+    "initial": false,
+    "upstream": "origin/main",
+    "ahead": 1,
+    "behind": 0,
+    "changed": 3,
+    "clean": false,
+    "staged": 1,
+    "unstaged": 1,
+    "untracked": 1,
+    "conflicted": 0,
+    "error": null
+  }, {
+    "path": "/abs/plain",
+    "isRepo": false,
+    "error": "fatal: not a git repository ..."
+  }]
+}
+```
+
+- `changed` 按文件去重；一个部分暂存的文件只算一次。
+- `isRepo:false` 同时表示「不是仓库」和「路径不可访问」，原因放在 `error`。
+- 最多并发 4 个仓库；超时与取消由 `operations.handle` 统一控制。
+
+### 3.2 `snapshot` — 面板全量状态
 
 参数：`{ cwd }`
 
@@ -139,7 +179,7 @@ content-type: application/json
 一个文件可能同时出现在 `staged` 和 `unstaged`（部分暂存）。未跟踪恒为 `?`。
 `conflicted` 来自 `u` 记录，`status` 是 XY 组合（如 `UU`、`AU`）。
 
-### 3.2 `graph` — 提交历史
+### 3.3 `graph` — 提交历史
 
 参数：`{ cwd, limit?: number, all?: boolean }`（limit 20..300，默认 120；all 默认 true）
 
@@ -178,7 +218,7 @@ content-type: application/json
 
 空仓库返回 `{ commits: [], all }`，不算错误。
 
-### 3.3 `commitInfo`
+### 3.4 `commitInfo`
 
 参数：`{ cwd, hash }`
 
@@ -194,7 +234,7 @@ content-type: application/json
 }
 ```
 
-### 3.4 `diff`
+### 3.5 `diff`
 
 参数：`{ cwd, mode: "worktree"|"staged"|"commit"|"untracked", path?: string, hash?: string }`
 
@@ -239,7 +279,7 @@ content-type: application/json
 - `raw` 上限 400 000 字符，超出 `truncated: true`（Client 不依赖 raw）。
 - 文件状态：`A` 新增、`D` 删除、`R` 重命名、`M` 修改。
 
-### 3.5 `sync` / `pull` / `push`
+### 3.6 `sync` / `pull` / `push`
 
 参数：
 
@@ -278,7 +318,7 @@ content-type: application/json
 
 `steps[].id`：`fetch` / `upstream` / `stash` / `merge` / `stash-restore` / `push-retry` / `push`。
 
-### 3.6 写操作
+### 3.7 写操作
 
 | op | 参数 | 行为 |
 | --- | --- | --- |
@@ -308,7 +348,7 @@ content-type: application/json
 
 `discard` 不可恢复，Client 必须二次确认。冲突文件不提供 discard。
 
-### 3.7 冲突
+### 3.8 冲突
 
 `conflictInfo`：`{ cwd, path }`
 
@@ -498,6 +538,14 @@ ctx.slots.inject('sidebar.right.pane.tab', () =>
 
 ctx.slots.inject('conversation.session.header.utilities', () =>
   ctx.slots.register({ name: '...', id: 'wdx-git', order: 11, label: ... }, HeaderGitButton))
+
+// 左侧栏的全局入口 + 全局页面
+ctx.slots.inject('main', () =>
+  ctx.slots.register({ name: 'main', key: 'wdx-git-global', locale: 'wdx-git' }, GlobalGitPage))
+
+ctx.slots.inject('sidebar.panellist', () =>
+  ctx.slots.register({ name: 'sidebar.panellist', id: 'wdx-git-global', order: 5,
+    label: () => t('global.nav') }, GlobalPanelIcon))
 ```
 
 `GitTabBody` 的 props 带 `sessionId`；cwd 从
@@ -518,7 +566,18 @@ ctx.slots.inject('conversation.session.header.utilities', () =>
 - 所有样式都在组件内 `<style>`，class 前缀 `wx-`；颜色只用 DSH theme token，
   主色引用 `--dsw-alias-state-business-primary`，不硬编码品牌蓝。
 
-### 5.3 本地持久化
+### 5.3 全局仓库页
+
+`GlobalGitPage` 通过 `ctx.workspaces.list` 枚举当前 DSH 的全部工作区（按路径去重），
+左侧是 GitHub Desktop 式仓库栏：按父目录分组，显示分支、ahead/behind 和改动数；
+右侧把现有 `GitPanel` 用在合成会话上：`summary = { cwd: path }`、
+`sessionId = null`，并创建独立的 controller。因此没有会话也能提交、同步、看历史；
+AI 提交信息在没有会话时改用默认模型。概览每 30s 调用一次 `overview`，页面刚打开
+或手动刷新时立即调用。手动刷新至少保持 650ms 的旋转状态，完成后按钮短暂变绿色对勾；
+状态行显示正在刷新、更新数量、已是最新或失败原因，变化仓库行高亮 1.5s。选中仓库的
+snapshot 更新会即时回写对应的仓库行。
+
+### 5.4 本地持久化
 
 | key | 内容 |
 | --- | --- |
@@ -526,6 +585,7 @@ ctx.slots.inject('conversation.session.header.utilities', () =>
 | `wdx-git:push-after-commit` | boolean |
 | `wdx-git:auto-stash` | boolean |
 | `wdx-git:auto-resolve-conflicts` | boolean，默认 `false`；开启后 sync / pull 产生冲突会直接调用 `aiResolve(apply)` 逐个解决，不再确认 |
+| `wdx-git:global-repo` | 全局仓库页最后选中的工作区路径 |
 
 仓库级自定义提示词在 git config，不进 localStorage。
 

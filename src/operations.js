@@ -41,7 +41,7 @@ const COMMIT_PROMPT_KEY = 'wdx.git.commitPrompt'
 const COMMIT_PROMPT_MAX = 5000
 
 const OPS = [
-  'snapshot', 'graph', 'commitInfo', 'diff',
+  'overview', 'snapshot', 'graph', 'commitInfo', 'diff',
   'stage', 'unstage', 'discard',
   'switchBranch', 'createBranch', 'deleteBranch',
   'commit', 'fetch', 'pull', 'push', 'sync',
@@ -260,6 +260,94 @@ export function createOperations(deps) {
       if (subject.code === 0 && subject.stdout.trim() !== '') return subject.stdout.trim()
     }
     return null
+  }
+
+  function assertPathList(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new GitError('paths 不能为空', { code: 'invalid-params' })
+    }
+    if (value.length > 128) {
+      throw new GitError(`一次最多查询 128 个工作区，收到 ${value.length} 个`, { code: 'invalid-params' })
+    }
+    const seen = new Set()
+    const paths = []
+    for (const entry of value) {
+      const path = assertCwd(entry)
+      if (!seen.has(path)) {
+        seen.add(path)
+        paths.push(path)
+      }
+    }
+    return paths
+  }
+
+  /** Run `fn` over `items` with a small concurrency cap so a long workspace list does not spawn git in bursts. */
+  async function eachLimit(items, limit, fn) {
+    const results = new Array(items.length)
+    let cursor = 0
+    async function worker() {
+      while (cursor < items.length) {
+        const index = cursor
+        cursor += 1
+        results[index] = await fn(items[index], index)
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+    return results
+  }
+
+  /** One workspace's summary for the cross-project repository list; a bad path never fails the batch. */
+  async function repoOverview(path, signal) {
+    let resolvedRoot = null
+    try {
+      const resolved = await repoRoot(path, signal)
+      if (!resolved.root) {
+        return {
+          path,
+          isRepo: false,
+          error: resolved.error ? brief(resolved.error, 300) : null,
+        }
+      }
+      resolvedRoot = resolved.root
+      const status = await readStatus(resolvedRoot, signal)
+      const unique = new Set()
+      for (const group of [status.changes.staged, status.changes.unstaged, status.changes.untracked, status.changes.conflicted]) {
+        for (const entry of group) unique.add(entry.path)
+      }
+      return {
+        path,
+        isRepo: true,
+        root: resolvedRoot,
+        name: basename(resolvedRoot) || resolvedRoot,
+        branch: status.branch.head,
+        detached: status.branch.detached,
+        initial: status.branch.initial,
+        upstream: status.branch.upstream,
+        ahead: status.branch.ahead,
+        behind: status.branch.behind,
+        changed: unique.size,
+        clean: unique.size === 0,
+        staged: status.changes.staged.length,
+        unstaged: status.changes.unstaged.length,
+        untracked: status.changes.untracked.length,
+        conflicted: status.changes.conflicted.length,
+        error: null,
+      }
+    } catch (error) {
+      return {
+        path,
+        isRepo: resolvedRoot !== null,
+        root: resolvedRoot,
+        error: brief(error?.message ?? error, 300),
+        code: error instanceof GitError ? error.code : 'internal',
+      }
+    }
+  }
+
+  async function overview(params, signal) {
+    const paths = assertPathList(params.paths)
+    const repos = await eachLimit(paths, 4, (path) => repoOverview(path, signal))
+    return { repos, at: Date.now() }
   }
 
   async function snapshot(params, signal) {
@@ -1147,7 +1235,7 @@ export function createOperations(deps) {
   }
 
   const handlers = {
-    snapshot, graph, commitInfo, diff,
+    overview, snapshot, graph, commitInfo, diff,
     stage, unstage, discard,
     switchBranch, createBranch, deleteBranch,
     commit, fetch: fetchRemote, pull, push, sync,

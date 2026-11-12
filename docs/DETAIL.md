@@ -27,6 +27,24 @@ merge and restored afterwards. A rejected push is retried once after fetch and
 merge. A conflict stops the operation. WDX Git never force-pushes, rebases
 automatically, or rewrites existing history.
 
+## All repositories
+
+The **Git** entry in the left sidebar opens the global repository page. It lists
+every workspace in the current DSH automatically, grouped by parent folder
+(GitHub Desktop style), with the branch, ahead/behind counts, and change count.
+The selected repository opens the same commit page on the right: check files,
+write a message, sync, and browse history without starting a session in that
+project.
+
+![All repositories](images/global.png)
+
+The overview refreshes every 30 seconds, and the toolbar button refreshes it on
+demand. A manual refresh spins for at least 650ms, turns into a green check,
+and reports how many repositories changed (or that everything is current) in
+the rail status line; changed rows highlight for 1.5s. With no session, AI
+commit messages use the default model. Workspaces
+that are not Git repositories are still listed and marked "Not a Git repository".
+
 ## Commit tab
 
 The panel opens on the Commit tab. Summary and description are separate fields,
