@@ -1,6 +1,6 @@
 {
   "name": "dsh-wdx-git",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Git across your AI sessions: a session panel plus a global repository page for every workspace, one sync button that becomes Fetch/Pull/Push/Sync, a default-selected commit tab, default-checked changes, history, branches, conflict resolution and AI commit messages for DSH.",
   "type": "module",
   "main": "index.js",
