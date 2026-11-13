@@ -4,7 +4,40 @@ import { readFile } from 'node:fs/promises'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createOperations } from '../src/operations.js'
+import { integrate } from '../src/sync.js'
 import { exec, createRepo, cloneRepo, write, git, tempDir, cleanup } from './helpers.mjs'
+
+test('push keeps retrying while the remote moves again during merges', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+
+  await write(env.repo, 'local.txt', 'local\n')
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-qm', 'feat: local'], env.repo)
+
+  let pushes = 0
+  const run = async (args, options = {}) => {
+    if (args[0] === 'push') {
+      pushes += 1
+      // Land a new remote commit before each of the first two attempts so the
+      // loop has to fetch + merge again instead of giving up after one retry.
+      if (pushes <= 2) {
+        await write(clone, `remote-${pushes}.txt`, 'remote\n')
+        await git(['add', '-A'], clone)
+        await git(['commit', '-qm', `feat: remote ${pushes}`], clone)
+        await git(['push', '-q'], clone)
+      }
+    }
+    return exec(['git', ...args], { cwd: env.repo, ...options })
+  }
+
+  const result = await integrate({ run, mode: 'push', cwd: env.repo })
+  assert.equal(result.conflict, false)
+  assert.equal(result.pushed, true)
+  assert.equal(pushes, 3)
+  assert.equal(result.merged, 'merge')
+})
 
 test('sync publishes a new local branch and establishes its upstream', async (t) => {
   const env = await createRepo()
@@ -214,4 +247,78 @@ test('sync pushes annotated tags that reach the pushed branch', async (t) => {
   const result = await call('sync')
   assert.equal(result.pushed, true)
   assert.equal(await git(['tag', '-l'], env.remote), 'v0.0.1')
+})
+
+test('sync reports the auto-stash of a conflicted merge so it can be restored later', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+  const other = (op, params = {}) => operations.handle(op, { cwd: clone, ...params })
+
+  await write(clone, 'README.md', '# incoming\n')
+  await other('commit', { message: 'fix: incoming readme' })
+  await other('sync')
+
+  await write(env.repo, 'README.md', '# ours\n')
+  await local('commit', { message: 'fix: ours readme' })
+  await write(env.repo, 'draft.txt', 'local draft\n')
+
+  const result = await local('sync')
+  assert.equal(result.conflict, true)
+  assert.equal(result.stashed, true)
+  assert.match(String(result.stashHash || ''), /^[0-9a-f]{40}$/)
+
+  await local('applyResolution', { path: 'README.md', content: '# merged\n' })
+  await local('commit', { message: 'merge: resolve readme' })
+
+  const pop = await local('stashPop', { hash: result.stashHash })
+  assert.equal(pop.conflict, false)
+  assert.equal(pop.missing, false)
+  assert.equal(await readFile(`${env.repo}/draft.txt`, 'utf8'), 'local draft\n')
+  const snapshot = await local('snapshot')
+  assert.equal(snapshot.stashes.length, 0)
+
+  // This is what the panel does after resolving the conflict: the original
+  // sync intent (fetch + merge + push) resumes without another click.
+  const resumed = await local('sync')
+  assert.equal(resumed.conflict, false)
+  assert.equal(resumed.pushed, true)
+})
+
+test('a stash restore conflict keeps the stash addressable by hash', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(env.repo, 'shared.txt', 'base\n')
+  await local('commit', { message: 'chore: shared base' })
+  await local('sync')
+
+  const clone = await cloneRepo(env.base)
+  const other = (op, params = {}) => operations.handle(op, { cwd: clone, ...params })
+  await write(clone, 'shared.txt', 'remote\n')
+  await other('commit', { message: 'fix: remote shared' })
+  await other('sync')
+
+  await write(env.repo, 'shared.txt', 'local edit\n')
+  const result = await local('sync')
+  assert.equal(result.conflict, true)
+  assert.equal(result.stashRestoreConflict, true)
+  assert.match(String(result.stashHash || ''), /^[0-9a-f]{40}$/)
+
+  await local('applyResolution', { path: 'shared.txt', content: 'merged\n' })
+  const dropped = await local('stashDrop', { hash: result.stashHash })
+  assert.equal(dropped.dropped, true)
+  assert.equal(dropped.missing, false)
+
+  const again = await local('stashPop', { hash: result.stashHash })
+  assert.equal(again.missing, true)
+
+  const snapshot = await local('snapshot')
+  assert.equal(snapshot.stashes.length, 0)
+  assert.equal(snapshot.status.conflicted.length, 0)
+  assert.equal(await readFile(`${env.repo}/shared.txt`, 'utf8'), 'merged\n')
 })

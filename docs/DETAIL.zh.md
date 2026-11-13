@@ -20,8 +20,10 @@ WDX Git 在 DeepSeek Harness 右侧栏里加一个 Git 面板。从会话头部�
 `↑` 是待推送的本地提交。
 
 点下去会 fetch、需要时补 upstream、快进或合并，有内容时再推送。工作区改动
-会在合并前自动 stash，合并后恢复。推送被拒时只 fetch + merge + 重试一次。
-遇到冲突就停下来。WDX Git 不 force push、不自动 rebase，也不改写已有历史。
+会在合并前自动 stash，合并后恢复。推送被拒时 fetch + merge 后重试，最多 4 轮。
+碰到冲突时，解决完最后一项会自动继续 merge / rebase、恢复自动 stash，并按最初的
+点击自动推送，不需要再点一次「继续」或「推送」。WDX Git 不 force push、不自动
+rebase，也不改写已有历史。
 
 ## 跨项目仓库
 
@@ -69,8 +71,10 @@ ours 和 theirs。可以取某一侧，让 AI 生成合并建议（只预览，�
 或点「AI 解决全部」：插件逐个文件生成合并结果并直接写入、暂存，大文件按冲突块
 分别处理，单个文件失败不会中断其余文件，最后汇总失败原因。设置里可以打开
 「冲突后自动用 AI 解决」（默认关闭）：打开后，同步或拉取一旦产生冲突就直接开始
-逐个处理，不再询问。也可以手工改完后标记为已解决，或从面板继续 / 中止 merge、
-rebase、cherry-pick、revert。
+逐个处理，不再询问。冲突全部解决后，插件自动完成剩下的机械步骤：commit merge /
+continue rebase、把自动 stash 的本地改动放回工作区、必要时自动推送；中途再次冲突
+会继续按上面的规则处理，失败时才停下等你手工解决。也可以手工改完后标记为已解决，
+或从面板继续 / 中止 merge、rebase、cherry-pick、revert。
 
 ![冲突解决](images/conflict.png)
 

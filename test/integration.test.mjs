@@ -230,6 +230,174 @@ test('an in-progress merge can be aborted', async (t) => {
   assert.equal(await readFile(`${env.repo}/README.md`, 'utf8'), '# ours\n')
 })
 
+test('a finished rebase does not keep reporting itself in progress', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(clone, 'README.md', '# incoming\n')
+  await git(['commit', '-qam', 'fix: incoming'], clone)
+  await git(['push', '-q'], clone)
+  await write(env.repo, 'README.md', '# ours\n')
+  await git(['commit', '-qam', 'fix: local'], env.repo)
+  await git(['fetch', '-q', 'origin'], env.repo)
+  await assert.rejects(git(['rebase', 'origin/main'], env.repo), /could not apply|CONFLICT/)
+
+  let snapshot = await local('snapshot')
+  assert.equal(snapshot.operation.rebase, true)
+  assert.equal(snapshot.status.conflicted.length, 1)
+
+  await local('takeSide', { path: 'README.md', side: 'theirs' })
+  const continued = await local('continueOperation')
+  assert.equal(continued.operation.inProgress, false)
+
+  // Git keeps the REBASE_HEAD pseudo-ref after a rebase finishes. Probing it
+  // used to fake an in-progress rebase forever, so Continue answered
+  // `fatal: no rebase in progress`.
+  const staleRef = await exec(['git', 'rev-parse', '--verify', '--quiet', 'REBASE_HEAD'], { cwd: env.repo })
+  assert.equal(staleRef.code, 0)
+
+  snapshot = await local('snapshot')
+  assert.equal(snapshot.operation.rebase, false)
+  assert.equal(snapshot.operation.inProgress, false)
+
+  const lateContinue = await local('continueOperation')
+  assert.equal(lateContinue.stale, true)
+  assert.equal(lateContinue.operation.inProgress, false)
+  const lateAbort = await local('abortOperation')
+  assert.equal(lateAbort.stale, true)
+  assert.equal(lateAbort.operation.inProgress, false)
+})
+
+test('continuing a multi-commit rebase reports the next conflict instead of failing', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(clone, 'README.md', '# incoming\n')
+  await git(['commit', '-qam', 'fix: incoming'], clone)
+  await git(['push', '-q'], clone)
+  await write(env.repo, 'README.md', '# ours one\n')
+  await git(['commit', '-qam', 'fix: local one'], env.repo)
+  await write(env.repo, 'README.md', '# ours two\n')
+  await git(['commit', '-qam', 'fix: local two'], env.repo)
+  await git(['fetch', '-q', 'origin'], env.repo)
+  await assert.rejects(git(['rebase', 'origin/main'], env.repo), /could not apply|CONFLICT/)
+
+  await local('applyResolution', { path: 'README.md', content: '# resolved one\n' })
+  const mid = await local('continueOperation')
+  assert.equal(mid.conflict, true)
+  assert.equal(mid.stale, false)
+  assert.equal(mid.operation.rebase, true)
+  assert.equal(mid.operation.conflicted, 1)
+
+  await local('applyResolution', { path: 'README.md', content: '# resolved two\n' })
+  const done = await local('continueOperation')
+  assert.equal(done.conflict, false)
+  assert.equal(done.operation.inProgress, false)
+})
+
+test('continuing parks other unstaged edits and restores them afterwards', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(env.repo, 'extra.txt', 'base\n')
+  await local('commit', { message: 'chore: tracked extra' })
+  await local('sync')
+
+  const clone = await cloneRepo(env.base)
+  const other = (op, params = {}) => operations.handle(op, { cwd: clone, ...params })
+  await write(clone, 'README.md', '# incoming\n')
+  await other('commit', { message: 'fix: incoming readme' })
+  await other('sync')
+  await write(env.repo, 'README.md', '# ours\n')
+  await local('commit', { message: 'fix: ours readme' })
+  await git(['fetch', '-q', 'origin'], env.repo)
+  await assert.rejects(git(['rebase', 'origin/main'], env.repo), /could not apply|CONFLICT/)
+
+  await local('applyResolution', { path: 'README.md', content: '# resolved\n' })
+  await write(env.repo, 'extra.txt', 'unstaged edit\n')
+
+  const continued = await local('continueOperation')
+  assert.equal(continued.conflict, false)
+  assert.equal(continued.operation.inProgress, false)
+  assert.match(String(continued.stashHash || ''), /^[0-9a-f]{40}$/)
+
+  const pop = await local('stashPop', { hash: continued.stashHash })
+  assert.equal(pop.conflict, false)
+  assert.equal(await readFile(`${env.repo}/extra.txt`, 'utf8'), 'unstaged edit\n')
+  const snapshot = await local('snapshot')
+  assert.equal(snapshot.stashes.length, 0)
+})
+
+test('concurrent mutating RPCs on one repository are serialized', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await write(env.repo, 'a.txt', 'a\n')
+  await write(env.repo, 'b.txt', 'b\n')
+
+  let active = 0
+  let peak = 0
+  const slowExec = async (argv, options) => {
+    const probe = argv.includes('--show-toplevel')
+    if (!probe) {
+      active += 1
+      peak = Math.max(peak, active)
+    }
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      return await exec(argv, options)
+    } finally {
+      if (!probe) active -= 1
+    }
+  }
+  const operations = createOperations({ exec: slowExec })
+  await Promise.all([
+    operations.handle('stage', { cwd: env.repo, paths: ['a.txt'] }),
+    operations.handle('stage', { cwd: env.repo, paths: ['b.txt'] }),
+  ])
+  assert.equal(peak, 1, 'git commands for mutating RPCs must not overlap')
+
+  const snapshot = await operations.handle('snapshot', { cwd: env.repo })
+  assert.deepEqual(snapshot.status.staged.map((entry) => entry.path).sort(), ['a.txt', 'b.txt'])
+})
+
+test('an empty cherry-pick is skipped instead of stranding the panel', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(env.repo, 'f.txt', 'base\n')
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-qm', 'chore: base'], env.repo)
+  await write(env.repo, 'g.txt', 'x\n')
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-qm', 'feat: g'], env.repo)
+
+  await git(['switch', '-q', '-c', 'side', 'HEAD~1'], env.repo)
+  await write(env.repo, 'g.txt', 'x\n')
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-qm', 'feat: duplicate'], env.repo)
+  const picked = await exec(['git', 'cherry-pick', 'main'], { cwd: env.repo })
+  assert.notEqual(picked.code, 0)
+
+  let snapshot = await local('snapshot')
+  assert.equal(snapshot.operation.cherryPick, true)
+  assert.equal(snapshot.status.conflicted.length, 0)
+
+  const continued = await local('continueOperation')
+  assert.equal(continued.skipped, true)
+  assert.equal(continued.conflict, false)
+  assert.equal(continued.operation.inProgress, false)
+})
+
 test('initial repository unstaging and invalid parameter guards work', async (t) => {
   const env = await createRepo()
   t.after(() => cleanup(env.base))

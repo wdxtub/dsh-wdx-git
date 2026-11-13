@@ -10,6 +10,12 @@ import { commandFailure, brief } from './git.js'
 
 const AUTO_STASH_MESSAGE = 'wdx-git: auto-stash before sync'
 
+/** The commit id of the newest stash entry, so the panel can find it later. */
+async function newestStashHash(run, signal) {
+  const ref = await run(['rev-parse', '--verify', '--quiet', 'refs/stash'], { allowFailure: true, signal })
+  return ref.code === 0 ? ref.stdout.trim() : ''
+}
+
 /** Network-ish failures get a longer timeout than ordinary writes. */
 export const NETWORK_TIMEOUT = 240000
 
@@ -34,6 +40,8 @@ export async function integrate(options) {
   const { run, mode, cwd, signal } = options
   const steps = []
   const note = (id, detail) => steps.push({ id, detail: detail || '' })
+  let stashRestoreFailed = false
+  let pendingStashHash = null
 
   const branchResult = await run(['rev-parse', '--abbrev-ref', 'HEAD'], { allowFailure: true, signal })
   let branch = branchResult.code === 0 ? branchResult.stdout.trim() : ''
@@ -99,12 +107,18 @@ export async function integrate(options) {
         stashed: result.stashed,
         conflict: true,
         conflictFiles: result.conflictFiles,
+        stashHash: result.stashHash ?? null,
         stashRestoreConflict: !!result.stashRestoreConflict,
+        stashRestoreFailed: !!result.stashRestoreFailed,
         steps,
         output: result.output,
       }
     }
     mergedKind = result.merged
+    if (result.stashRestoreFailed) {
+      stashRestoreFailed = true
+      pendingStashHash = result.stashHash ?? null
+    }
     ;({ ahead, behind } = await trackingCounts(run, upstream, signal))
   }
 
@@ -134,6 +148,9 @@ export async function integrate(options) {
     stashed: steps.some((step) => step.id === 'stash'),
     conflict: false,
     conflictFiles: [],
+    stashHash: pendingStashHash,
+    stashRestoreConflict: false,
+    stashRestoreFailed,
     steps,
     output: steps.map((step) => step.detail).filter(Boolean).join('\n'),
   }
@@ -190,6 +207,7 @@ async function integrateRemote({ run, cwd, upstream, autoStash, signal, note }) 
   const status = await run(['status', '--porcelain=v2', '-z', '--untracked-files=all'], { allowFailure: true, signal })
   const dirty = status.code === 0 && status.stdout !== ''
   let stashed = false
+  let stashHash = ''
   let output = ''
   if (dirty && autoStash) {
     const stash = await run(['stash', 'push', '-u', '-m', AUTO_STASH_MESSAGE], {
@@ -199,6 +217,7 @@ async function integrateRemote({ run, cwd, upstream, autoStash, signal, note }) 
     })
     if (stash.code !== 0) throw commandFailure(['stash', 'push', '-u'], stash)
     stashed = true
+    stashHash = await newestStashHash(run, signal)
     note('stash', '本地改动已暂存到 stash')
     output += `${stash.stdout}\n`
   } else if (dirty) {
@@ -223,7 +242,9 @@ async function integrateRemote({ run, cwd, upstream, autoStash, signal, note }) 
     if (mergedResult.code !== 0) {
       const conflictFiles = await unmergedFiles(run, signal)
       if (conflictFiles.length > 0) {
-        return { conflict: true, conflictFiles, stashed, merged: null, output }
+        // The stash stays parked; the panel restores it once the merge commit
+        // for this conflict resolution exists.
+        return { conflict: true, conflictFiles, stashed, stashHash, merged: null, output }
       }
       await run(['merge', '--abort'], { allowFailure: true, signal })
       if (stashed) await run(['stash', 'pop'], { allowFailure: true, signal })
@@ -238,107 +259,125 @@ async function integrateRemote({ run, cwd, upstream, autoStash, signal, note }) 
     output += `${pop.stdout}\n${pop.stderr}\n`
     if (pop.code !== 0) {
       const conflictFiles = await unmergedFiles(run, signal)
+      if (conflictFiles.length > 0) {
+        return {
+          conflict: true,
+          conflictFiles,
+          stashed: true,
+          stashHash,
+          stashRestoreConflict: true,
+          merged,
+          output,
+        }
+      }
+      // No unmerged entries: the restore failed for another reason (a file
+      // collision, a lock, ...). Keep the stash and surface it as a warning
+      // instead of pretending this was a conflict or a clean sync.
+      note('stash-restore-failed', '本地改动未能自动恢复，仍保存在 stash')
       return {
-        conflict: true,
-        conflictFiles,
+        conflict: false,
+        conflictFiles: [],
         stashed: true,
-        stashRestoreConflict: conflictFiles.length > 0,
+        stashHash,
+        stashRestoreFailed: true,
         merged,
         output,
       }
     }
     note('stash-restore', '草稿改动已恢复')
   }
-  return { conflict: false, merged, stashed, conflictFiles: [], output }
+  return { conflict: false, merged, stashed, stashHash: null, conflictFiles: [], output }
 }
 
-/** Push, and on a non-fast-forward response fetch + merge + retry once. */
+/**
+ * Push, and when the remote moved on, fetch + merge + retry. A single retry is
+ * not enough on a busy branch (two pushes can land while we merge), so keep
+ * going up to a small bound instead of failing on the second rejection.
+ */
+const PUSH_ATTEMPTS = 4
+
 async function pushWithRetry({ run, cwd, branch, remote, steps, note, signal }) {
   let upstream = await resolveUpstream(run, cwd, branch, remote, signal)
   const fetchRemote = upstream.upstreamRemote || remote
-  let result = await pushOnce(run, cwd, branch, upstream, signal)
-  if (result.code === 0) {
-    note('push', brief(result.stderr, 400))
-    const tags = await pushTags(run, signal)
-    if (tags && tags.code !== 0) note('tags', brief(tags.stderr || tags.stdout, 400))
-    const final = await resolveUpstream(run, cwd, branch, remote, signal)
-    return {
-      mode: 'push',
-      branch,
-      remote: fetchRemote,
-      upstream: final.upstreamRef || null,
-      ahead: 0,
-      behind: 0,
-      hasUpstream: final.hasUpstream,
-      merged: null,
-      pushed: true,
-      stashed: false,
-      conflict: false,
-      conflictFiles: [],
-      steps,
-      output: result.stderr,
-    }
-  }
-  if (!isRejectedPush(result)) throw commandFailure(['push'], result)
-
-  // Remote moved after our last fetch: fetch, integrate once, then retry.
-  note('push-retry', '远端有新提交，先合并再推送')
-  const fetch = await run(['fetch', fetchRemote, '--prune'], { allowFailure: true, timeoutMs: NETWORK_TIMEOUT, signal })
-  if (fetch.code !== 0) throw commandFailure(['fetch', fetchRemote, '--prune'], fetch)
-  upstream = await resolveUpstream(run, cwd, branch, remote, signal)
-  const counts = await trackingCounts(run, upstream, signal)
   let mergeKind = null
-  if (counts.behind > 0) {
-    const merged = await integrateRemote({
-      run,
-      cwd,
-      upstream: upstream.hasUpstream ? upstream.upstreamRef : upstream.remoteRef,
-      autoStash: true,
-      signal,
-      note,
-    })
-    if (merged.conflict) {
+  let stashRestoreFailed = false
+  let pendingStashHash = null
+  let result = null
+  for (let attempt = 0; attempt < PUSH_ATTEMPTS; attempt += 1) {
+    result = await pushOnce(run, cwd, branch, upstream, signal)
+    if (result.code === 0) {
+      note('push', brief(result.stderr, 400))
+      const tags = await pushTags(run, signal)
+      if (tags && tags.code !== 0) note('tags', brief(tags.stderr || tags.stdout, 400))
+      const final = await resolveUpstream(run, cwd, branch, remote, signal)
       return {
         mode: 'push',
         branch,
         remote: fetchRemote,
-        upstream: upstream.upstreamRef || null,
+        upstream: final.upstreamRef || null,
         ahead: 0,
-        behind: counts.behind,
-        hasUpstream: upstream.hasUpstream,
-        merged: null,
-        pushed: false,
-        stashed: merged.stashed,
-        conflict: true,
-        conflictFiles: merged.conflictFiles,
+        behind: 0,
+        hasUpstream: final.hasUpstream,
+        merged: mergeKind,
+        pushed: true,
+        stashed: false,
+        conflict: false,
+        conflictFiles: [],
+        stashHash: pendingStashHash,
+        stashRestoreConflict: false,
+        stashRestoreFailed,
         steps,
-        output: merged.output,
+        output: result.stderr,
       }
     }
-    mergeKind = merged.merged
+    if (!isRejectedPush(result)) throw commandFailure(['push'], result)
+    if (attempt === PUSH_ATTEMPTS - 1) break
+
+    note('push-retry', attempt === 0
+      ? '远端有新提交，先合并再推送'
+      : '远端又更新了，继续合并后重试推送')
+    const fetch = await run(['fetch', fetchRemote, '--prune'], { allowFailure: true, timeoutMs: NETWORK_TIMEOUT, signal })
+    if (fetch.code !== 0) throw commandFailure(['fetch', fetchRemote, '--prune'], fetch)
+    upstream = await resolveUpstream(run, cwd, branch, remote, signal)
+    const counts = await trackingCounts(run, upstream, signal)
+    if (counts.behind > 0) {
+      const merged = await integrateRemote({
+        run,
+        cwd,
+        upstream: upstream.hasUpstream ? upstream.upstreamRef : upstream.remoteRef,
+        autoStash: true,
+        signal,
+        note,
+      })
+      if (merged.conflict) {
+        return {
+          mode: 'push',
+          branch,
+          remote: fetchRemote,
+          upstream: upstream.upstreamRef || null,
+          ahead: 0,
+          behind: counts.behind,
+          hasUpstream: upstream.hasUpstream,
+          merged: null,
+          pushed: false,
+          stashed: merged.stashed,
+          conflict: true,
+          conflictFiles: merged.conflictFiles,
+          stashHash: merged.stashHash ?? null,
+          stashRestoreConflict: !!merged.stashRestoreConflict,
+          stashRestoreFailed: !!merged.stashRestoreFailed,
+          steps,
+          output: merged.output,
+        }
+      }
+      if (merged.merged) mergeKind = merged.merged
+      if (merged.stashRestoreFailed) {
+        stashRestoreFailed = true
+        pendingStashHash = merged.stashHash ?? null
+      }
+    }
   }
-  result = await pushOnce(run, cwd, branch, upstream, signal)
-  if (result.code !== 0) throw commandFailure(['push'], result)
-  note('push', brief(result.stderr, 400))
-  const tags = await pushTags(run, signal)
-  if (tags && tags.code !== 0) note('tags', brief(tags.stderr || tags.stdout, 400))
-  const final = await resolveUpstream(run, cwd, branch, remote, signal)
-  return {
-    mode: 'push',
-    branch,
-    remote: fetchRemote,
-    upstream: final.upstreamRef || null,
-    ahead: 0,
-    behind: 0,
-    hasUpstream: final.hasUpstream,
-    merged: mergeKind,
-    pushed: true,
-    stashed: false,
-    conflict: false,
-    conflictFiles: [],
-    steps,
-    output: result.stderr,
-  }
+  throw commandFailure(['push'], result)
 }
 
 async function pushOnce(run, cwd, branch, upstream, signal) {

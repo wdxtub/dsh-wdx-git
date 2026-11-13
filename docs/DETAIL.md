@@ -23,9 +23,11 @@ arrows: ↓ for remote commits to pull, ↑ for local commits to push.
 
 A click runs fetch, sets the upstream when needed, fast-forwards or merges, then
 pushes when there is something to push. Working-tree changes are stashed before a
-merge and restored afterwards. A rejected push is retried once after fetch and
-merge. A conflict stops the operation. WDX Git never force-pushes, rebases
-automatically, or rewrites existing history.
+merge and restored afterwards. A rejected push is fetched + merged and retried,
+up to four rounds. When conflicts appear, resolving the last one automatically continues the
+merge/rebase, restores the auto-stash, and pushes if the original click was
+Sync/Push — no extra "Continue" or "Push" click. WDX Git never force-pushes,
+rebases automatically, or rewrites existing history.
 
 ## All repositories
 
@@ -86,8 +88,12 @@ Conflicts tab shows ours and theirs. Take one side, ask AI for a merge suggestio
 the plugin merges and stages each file in turn, splitting large files into conflict
 regions, and a failed file does not stop the rest. Settings also has "Resolve conflicts
 with AI after sync" (off by default): when enabled, a conflict produced by sync or pull
-is processed immediately without asking. You can also edit a file and mark it resolved,
-or continue/abort a merge, rebase, cherry-pick, or revert from the panel.
+is processed immediately without asking. Once every conflict is resolved, the plugin
+finishes the mechanical part: commit the merge / continue the rebase, restore the
+auto-stashed local edits, and push when the original action asked for it. Another
+conflict mid-way is handled the same way; it stops only when resolution fails. You can
+also edit a file and mark it resolved, or continue/abort a merge, rebase,
+cherry-pick, or revert from the panel.
 
 ![Conflict resolution](images/conflict.png)
 

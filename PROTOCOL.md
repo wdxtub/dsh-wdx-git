@@ -167,6 +167,9 @@ content-type: application/json
 }
 ```
 
+`operation.rebase` 只以 `.git/rebase-merge` / `.git/rebase-apply` 状态目录是否存在为准；
+`REBASE_HEAD` 在 `rebase --continue` 成功后仍会被 git 保留，不能用来判断变基是否进行中。
+
 非仓库：
 
 ```json
@@ -307,16 +310,31 @@ content-type: application/json
   "stashed": false,
   "conflict": false,
   "conflictFiles": [],
+  "stashHash": null,
   "stashRestoreConflict": false,
+  "stashRestoreFailed": false,
   "steps": [{ "id": "fetch", "detail": "" }, { "id": "merge", "detail": "已创建合并提交" }],
   "output": "<拼接后的 git 输出>"
 }
 ```
 
 冲突时 `conflict: true`，`conflictFiles` 是未解决路径，`pushed: false`。合并已在进行中，
-不会自动 abort；客户端展示冲突并由用户解决后提交。
+不会自动 abort；客户端展示冲突并由用户解决后继续。`stashHash` 是本次自动 stash 的
+commit id：合并因冲突停下时它还在 stash 里，冲突恢复成功但 pop 失败时用于定位或删除
+该条目；`stashRestoreConflict` 表示 pop 产生冲突，`stashRestoreFailed` 表示 pop 因
+非冲突原因失败（条目保留）。客户端在冲突解决后会先 continue 操作，再按 hash 恢复或
+删除这个 stash，最后按原动作的意图（sync / push）自动推送。
 
 `steps[].id`：`fetch` / `upstream` / `stash` / `merge` / `stash-restore` / `push-retry` / `push`。
+
+推送被拒时 fetch + merge + 重试，最多 4 轮；远端在合并期间连续前进也不会在第二次
+拒绝时就放弃。
+
+Host 对同一仓库的写操作（`stage`、`commit`、`sync`、`continueOperation`、stash 等）
+串行执行，多个面板 / 全局页 / 会话不会同时修改 index。单步写操作（`stage`、`commit`、
+stash 等）碰到终端里其他 git 进程占用 `index.lock` 时会自动等待并重试；`sync` /
+`continueOperation` 这类可能已经暂存或合并了部分状态的步骤不盲目重放，直接返回
+`code: "locked"` 的友好错误。
 
 ### 3.7 写操作
 
@@ -331,11 +349,27 @@ content-type: application/json
 | `commit` | `{ cwd, message, autoStage?: boolean, paths?: string[], exclude?: string[] }` | 检查冲突 → 暂存选中路径（或 `add -A`）→ 取消选中排除项 → `git commit -m` |
 | `fetch` | `{ cwd, remote? }` | `git fetch --all --prune` / `git fetch <remote> --prune` |
 | `stashPush` | `{ cwd, message?, includeUntracked? }` | 默认 `-u` |
-| `stashPop` / `stashDrop` | `{ cwd, index? }` | `stash pop/drop stash@{n}` |
+| `stashPop` / `stashDrop` | `{ cwd, index?, hash? }` | `stash pop/drop stash@{n}`；`hash` 会自动解析当前索引，条目已不存在时 `stashPop` 返回 `missing: true`、`stashDrop` 返回 `dropped: false` |
 | `setCommitPrompt` | `{ cwd, prompt }` | `git config --local wdx.git.commitPrompt`；空串 unset |
-| `abortOperation` | `{ cwd }` | merge/rebase/cherry-pick/revert --abort |
-| `continueOperation` | `{ cwd }` | 对应 `--continue`；merge 用 `commit --no-edit` |
+| `abortOperation` | `{ cwd }` | merge/rebase/cherry-pick/revert --abort；操作已结束时不报错，返回 `stale: true` 和最新状态 |
+| `continueOperation` | `{ cwd }` | 对应 `--continue`；merge 用 `commit --no-edit`。有未暂存改动时先用 `stash push --keep-index` 暂存并在结果里返回 `stashHash`。多提交变基又遇到冲突时返回 `conflict: true` 和最新状态；操作已结束（含在终端完成）时返回 `stale: true` 而不是 `fatal: no rebase in progress` |
 | `markResolved` | `{ cwd, path }` | 手工解决后：校验无冲突标记再 `git add` |
+
+`continueOperation`：
+
+- 成功 → `{ output, operation, conflict: false, stale: false, stashHash }`。
+- 遇到下一个冲突 → `{ conflict: true, conflictFiles 在 operation 里, stashHash }`；stash
+  仍停着，等整个操作结束后按 hash 恢复。
+- 为让 git 接受 continue 而自动暂存的未暂存改动，解决冲突后必须恢复；`stashApplied: true`
+  表示恢复时产生了冲突，冲突解决后按 hash 删除该条目。
+- 空 cherry-pick / revert 自动 `--skip` 并返回 `skipped: true`。
+
+`stashPop`：
+
+- 成功 → `{ conflict: false, missing: false, index, output }`。
+- pop 产生未解决冲突 → `{ conflict: true, conflictFiles, index, output }`；stash 条目仍在，
+  解决冲突后按 `hash` 删除即可。
+- 用 `hash` 指定且条目已不存在 → `{ missing: true }`（幂等，供自动流程使用）。
 
 `commit`：
 

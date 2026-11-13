@@ -5,7 +5,7 @@
  * returns plain JSON. The only filesystem write is `applyResolution`, guarded
  * by a repository-relative path check and a re-read of the index conflict.
  */
-import { access, readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import {
@@ -52,6 +52,71 @@ const OPS = [
 ]
 
 const SAFE_REF = /^[\p{L}\p{N}._/-]+$/u
+
+/**
+ * One mutating operation at a time per repository. Studio panels, the global
+ * repository page and multiple sessions all share this process; without a
+ * queue two clicks can race on the index. External git processes (a terminal)
+ * are handled by retrying when git reports a lock.
+ */
+const repoQueues = new Map()
+
+function withRepoLock(key, task) {
+  const previous = repoQueues.get(key) ?? Promise.resolve()
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const tail = previous.then(() => gate)
+  repoQueues.set(key, tail)
+  return (async () => {
+    await previous
+    try {
+      return await task()
+    } finally {
+      release()
+      if (repoQueues.get(key) === tail) repoQueues.delete(key)
+    }
+  })()
+}
+
+const LOCK_ERROR_PATTERN = /index\.lock|another git process|unable to create .*lock|lock file already exists|cannot lock ref|ref lock|is locked/i
+
+/** Retry a mutating handler when git could not lock the repo for another process. */
+async function retryWhileLocked(task, signal, attempts = 4) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await task()
+    } catch (error) {
+      if (attempt === attempts - 1 || signal?.aborted) throw error
+      if (!LOCK_ERROR_PATTERN.test(String(error?.stderr || error?.message || ''))) throw error
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+    }
+  }
+  return undefined
+}
+
+const LOCKED_OPS = new Set([
+  'stage', 'unstage', 'discard',
+  'switchBranch', 'createBranch', 'deleteBranch',
+  'commit', 'fetch', 'pull', 'push', 'sync',
+  'stashPush', 'stashPop', 'stashDrop',
+  'applyResolution', 'takeSide', 'markResolved',
+  'abortOperation', 'continueOperation', 'setCommitPrompt',
+])
+
+const CONTINUE_STASH_MESSAGE = 'wdx-git: auto-stash before continue'
+
+/**
+ * Retrying is only safe for handlers that consist of one atomic git step. A
+ * sync/continue/push that already stashed or merged part of its work must not
+ * be replayed blindly on a lock error.
+ */
+const LOCK_RETRY_OPS = new Set([
+  'stage', 'unstage', 'discard',
+  'switchBranch', 'createBranch', 'deleteBranch',
+  'stashPush', 'stashPop', 'stashDrop',
+  'applyResolution', 'takeSide', 'markResolved',
+  'commit', 'setCommitPrompt',
+])
 
 function assertCwd(cwd) {
   if (typeof cwd !== 'string' || cwd.trim() === '') {
@@ -181,30 +246,38 @@ export function createOperations(deps) {
     return parseStatusV2(result.stdout)
   }
 
+  /**
+   * A rebase owns either `.git/rebase-merge` or `.git/rebase-apply`; these
+   * directories only exist while it runs. `REBASE_HEAD` is deliberately NOT
+   * used: git leaves that pseudo-ref behind after a successful
+   * `rebase --continue`, so probing it reports "rebase in progress" forever and
+   * the panel's Continue button ends in `fatal: no rebase in progress`.
+   */
+  async function rebaseInProgress(root, signal) {
+    for (const directory of ['rebase-merge', 'rebase-apply']) {
+      const pathResult = await runGit(['rev-parse', '--git-path', directory], { cwd: root, signal, allowFailure: true })
+      if (pathResult.code !== 0) continue
+      const gitPath = pathResult.stdout.trim()
+      if (gitPath === '') continue
+      try {
+        const info = await stat(isAbsolute(gitPath) ? gitPath : join(root, gitPath))
+        if (info.isDirectory()) return true
+      } catch {
+        // not present
+      }
+    }
+    return false
+  }
+
   /** Detect an in-flight merge/rebase/cherry-pick/revert and conflict count. */
   async function operationState(root, signal) {
-    const [status, merge, rebaseHead, cherryPick, revert] = await Promise.all([
+    const [status, merge, rebasing, cherryPick, revert] = await Promise.all([
       runGit(['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: root, signal, allowFailure: true }),
       runGit(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], { cwd: root, signal, allowFailure: true }),
-      runGit(['rev-parse', '--verify', '--quiet', 'REBASE_HEAD'], { cwd: root, signal, allowFailure: true }),
+      rebaseInProgress(root, signal),
       runGit(['rev-parse', '--verify', '--quiet', 'CHERRY_PICK_HEAD'], { cwd: root, signal, allowFailure: true }),
       runGit(['rev-parse', '--verify', '--quiet', 'REVERT_HEAD'], { cwd: root, signal, allowFailure: true }),
     ])
-    let rebasing = rebaseHead.code === 0
-    if (!rebasing) {
-      for (const directory of ['rebase-merge', 'rebase-apply']) {
-        const pathResult = await runGit(['rev-parse', '--git-path', directory], { cwd: root, signal, allowFailure: true })
-        if (pathResult.code !== 0) continue
-        const gitPath = pathResult.stdout.trim()
-        try {
-          await access(isAbsolute(gitPath) ? gitPath : join(root, gitPath))
-          rebasing = true
-          break
-        } catch {
-          // not present
-        }
-      }
-    }
     return {
       merge: merge.code === 0,
       rebase: rebasing,
@@ -251,7 +324,11 @@ export function createOperations(deps) {
   }
 
   async function incomingRef(root, signal) {
-    for (const ref of ['MERGE_HEAD', 'REBASE_HEAD']) {
+    const refs = ['MERGE_HEAD']
+    // REBASE_HEAD survives a finished rebase, so only trust it while the
+    // rebase state directory is present (e.g. conflicts restored from a stash).
+    if (await rebaseInProgress(root, signal)) refs.push('REBASE_HEAD')
+    for (const ref of refs) {
       const exists = await runGit(['rev-parse', '--verify', '--quiet', ref], { cwd: root, signal, allowFailure: true })
       if (exists.code !== 0) continue
       const name = await runGit(['name-rev', '--name-only', ref], { cwd: root, signal, allowFailure: true })
@@ -786,6 +863,44 @@ export function createOperations(deps) {
     return index
   }
 
+  async function newestStashHash(root, signal) {
+    const ref = await runGit(['rev-parse', '--verify', '--quiet', 'refs/stash'], {
+      cwd: root, signal, allowFailure: true,
+    })
+    return ref.code === 0 ? ref.stdout.trim() : ''
+  }
+
+  function assertStashHash(value) {
+    const hash = String(value ?? '').trim()
+    if (!/^[0-9a-f]{4,40}$/.test(hash)) {
+      throw new GitError(`stash 哈希非法：${String(value)}`, { code: 'invalid-params' })
+    }
+    return hash
+  }
+
+  /** Resolve a stable stash hash to its current index; null when it is gone. */
+  async function stashIndexByHash(root, hash, signal) {
+    const listed = await runGit(['stash', 'list', '--format=%H'], { cwd: root, signal, allowFailure: true })
+    if (listed.code !== 0) return null
+    const hashes = String(listed.stdout ?? '').split('\n').map((line) => line.trim()).filter(Boolean)
+    const index = hashes.indexOf(hash)
+    return index >= 0 ? index : null
+  }
+
+  /**
+   * Stash entries move when other stashes are pushed/popped, so callers that
+   * remember one across several steps should pass its hash. Automation treats a
+   * missing hash as "already restored/dropped" instead of an error.
+   */
+  async function stashTarget(root, params, signal) {
+    if (typeof params.hash === 'string' && params.hash.trim() !== '') {
+      const hash = assertStashHash(params.hash)
+      const index = await stashIndexByHash(root, hash, signal)
+      return { hash, index }
+    }
+    return { hash: null, index: assertStashIndex(params.index) }
+  }
+
   async function stashPush(params, signal) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
@@ -800,21 +915,35 @@ export function createOperations(deps) {
   async function stashPop(params, signal) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
-    const index = assertStashIndex(params.index)
-    const result = await runGit(['stash', 'pop', `stash@{${index}}`], {
-      cwd: root, signal, timeoutMs: timeouts.write,
+    const target = await stashTarget(root, params, signal)
+    if (target.hash !== null && target.index === null) {
+      return { missing: true, conflict: false, conflictFiles: [], output: '', index: null }
+    }
+    const result = await runGit(['stash', 'pop', `stash@{${target.index}}`], {
+      cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true,
     })
-    return { output: joinOutput(result.stdout, result.stderr) }
+    const output = joinOutput(result.stdout, result.stderr)
+    if (result.code !== 0) {
+      const conflictFiles = await unmergedFiles((args, options = {}) => runGit(args, { cwd: root, signal, ...options }), signal)
+      if (conflictFiles.length > 0) {
+        return { missing: false, conflict: true, conflictFiles, output, index: target.index }
+      }
+      throw commandFailure(['stash', 'pop', `stash@{${target.index}}`], result)
+    }
+    return { missing: false, conflict: false, conflictFiles: [], output, index: target.index }
   }
 
   async function stashDrop(params, signal) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
-    const index = assertStashIndex(params.index)
-    const result = await runGit(['stash', 'drop', `stash@{${index}}`], {
+    const target = await stashTarget(root, params, signal)
+    if (target.hash !== null && target.index === null) {
+      return { missing: true, dropped: false, output: '', index: null }
+    }
+    const result = await runGit(['stash', 'drop', `stash@{${target.index}}`], {
       cwd: root, signal, timeoutMs: timeouts.write,
     })
-    return { output: joinOutput(result.stdout, result.stderr) }
+    return { missing: false, dropped: true, output: joinOutput(result.stdout, result.stderr), index: target.index }
   }
 
   async function setCommitPrompt(params, signal) {
@@ -1197,6 +1326,21 @@ export function createOperations(deps) {
     return { path, side, deleted, resolved: true, unmerged: await unmergedCount(root, signal) }
   }
 
+  /** Git's diagnostics for an operation that is no longer in progress. */
+  function reportsNoOperationInProgress(text) {
+    return /no rebase in progress|no cherry-pick or revert in progress|no cherry-pick in progress|no revert in progress|no merge in progress/i
+      .test(String(text ?? ''))
+  }
+
+  /** The git command that resumes the in-flight operation, if there is one. */
+  function continueArgsFor(operation) {
+    if (operation.rebase) return ['-c', 'core.editor=true', 'rebase', '--continue']
+    if (operation.cherryPick) return ['-c', 'core.editor=true', 'cherry-pick', '--continue']
+    if (operation.revert) return ['-c', 'core.editor=true', 'revert', '--continue']
+    if (operation.merge) return ['-c', 'core.editor=true', 'commit', '--no-edit']
+    return null
+  }
+
   async function abortOperation(params, signal) {
     const cwd = assertCwd(params.cwd)
     const root = await requireRepo(cwd, signal)
@@ -1206,14 +1350,24 @@ export function createOperations(deps) {
     if (op.rebase) commands.push(['rebase', '--abort'])
     if (op.cherryPick) commands.push(['cherry-pick', '--abort'])
     if (op.revert) commands.push(['revert', '--abort'])
-    if (commands.length === 0) throw new GitError('当前没有进行中的合并或变基', { code: 'invalid-params' })
+    if (commands.length === 0) {
+      // The caller may hold a snapshot from before the operation finished.
+      return { output: '', operation: op, stale: true }
+    }
     const outputs = []
+    let stale = false
     for (const args of commands) {
       const result = await runGit(args, { cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true })
       outputs.push(joinOutput(result.stdout, result.stderr))
-      if (result.code !== 0) throw commandFailure(args, result)
+      if (result.code === 0) continue
+      // Idempotency: someone else (terminal, another client) already ended it.
+      if (reportsNoOperationInProgress(joinOutput(result.stdout, result.stderr))) {
+        stale = true
+        continue
+      }
+      throw commandFailure(args, result)
     }
-    return { output: outputs.filter(Boolean).join('\n'), operation: await operationState(root, signal) }
+    return { output: outputs.filter(Boolean).join('\n'), operation: await operationState(root, signal), stale }
   }
 
   async function continueOperation(params, signal) {
@@ -1223,15 +1377,97 @@ export function createOperations(deps) {
     if (op.conflicted > 0) {
       throw new GitError(`还有 ${op.conflicted} 个冲突文件未解决`, { code: 'conflict' })
     }
-    let args = null
-    if (op.rebase) args = ['-c', 'core.editor=true', 'rebase', '--continue']
-    else if (op.cherryPick) args = ['-c', 'core.editor=true', 'cherry-pick', '--continue']
-    else if (op.revert) args = ['-c', 'core.editor=true', 'revert', '--continue']
-    else if (op.merge) args = ['-c', 'core.editor=true', 'commit', '--no-edit']
-    if (!args) throw new GitError('当前没有可继续的操作', { code: 'invalid-params' })
+    const args = continueArgsFor(op)
+    if (!args) {
+      // Nothing left to continue: report the fresh state instead of failing.
+      return { output: '', operation: op, conflict: false, stale: true, stashHash: null }
+    }
+    // A rebase/cherry-pick/revert refuses to continue while tracked files are
+    // modified but unstaged. Park those edits (keeping the resolved conflict
+    // content in the index) and let the client restore them once the whole
+    // operation is done.
+    let continueStash = null
+    if (!op.merge) {
+      const unstaged = await runGit(['diff', '--name-only', '-z'], { cwd: root, signal, allowFailure: true })
+      const changed = String(unstaged.stdout ?? '').split('\0').filter(Boolean)
+      if (changed.length > 0) {
+        const stash = await runGit(['stash', 'push', '--keep-index', '-m', CONTINUE_STASH_MESSAGE], {
+          cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true,
+        })
+        if (stash.code !== 0) {
+          throw commandFailure(['stash', 'push', '--keep-index', '-m', CONTINUE_STASH_MESSAGE], stash)
+        }
+        continueStash = await newestStashHash(root, signal) || null
+      }
+    }
     const result = await runGit(args, { cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true })
-    if (result.code !== 0) throw commandFailure(args, result)
-    return { output: joinOutput(result.stdout, result.stderr), operation: await operationState(root, signal) }
+    if (result.code === 0) {
+      return {
+        output: joinOutput(result.stdout, result.stderr),
+        operation: await operationState(root, signal),
+        conflict: false,
+        stale: false,
+        stashHash: continueStash,
+      }
+    }
+    const output = joinOutput(result.stdout, result.stderr)
+    const next = await operationState(root, signal)
+    // A multi-commit rebase can stop on the next conflict. That is a new state
+    // to resolve, not a dead-end failure.
+    if (next.conflicted > 0) {
+      return { output, operation: next, conflict: true, stale: false, stashHash: continueStash }
+    }
+    // A resolution that ends up identical to upstream leaves an empty
+    // cherry-pick/revert. Git insists on an explicit --skip; do it so the flow
+    // does not strand the user on a raw "use git cherry-pick --skip" hint.
+    const emptySkipped = /The previous (cherry-pick|revert) is now empty/i.test(output)
+    if ((op.cherryPick || op.revert) && emptySkipped) {
+      const skipArgs = op.cherryPick
+        ? ['-c', 'core.editor=true', 'cherry-pick', '--skip']
+        : ['-c', 'core.editor=true', 'revert', '--skip']
+      const skipped = await runGit(skipArgs, { cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true })
+      if (skipped.code === 0) {
+        return {
+          output: joinOutput(output, skipped.stdout, skipped.stderr),
+          operation: await operationState(root, signal),
+          conflict: false,
+          stale: false,
+          skipped: true,
+          stashHash: continueStash,
+        }
+      }
+    }
+    // The operation finished between the snapshot and this click, or git no
+    // longer knows about it. Refresh the panel instead of surfacing a raw
+    // `fatal: no rebase in progress`.
+    if (reportsNoOperationInProgress(output) || !next.inProgress) {
+      return { output, operation: next, conflict: false, stale: true, stashHash: continueStash }
+    }
+    // The continue failed for another reason. Give the parked edits back; if
+    // that restore conflicts, report it as a resolvable conflict instead of
+    // hiding the stash entry.
+    if (continueStash) {
+      const stashIndex = await stashIndexByHash(root, continueStash, signal)
+      if (stashIndex !== null) {
+        const restore = await runGit(['stash', 'pop', `stash@{${stashIndex}}`], {
+          cwd: root, signal, timeoutMs: timeouts.write, allowFailure: true,
+        })
+        if (restore.code !== 0) {
+          const conflicts = await unmergedFiles((argv, options = {}) => runGit(argv, { cwd: root, signal, ...options }), signal)
+          if (conflicts.length > 0) {
+            return {
+              output: joinOutput(output, restore.stdout, restore.stderr),
+              operation: await operationState(root, signal),
+              conflict: true,
+              stale: false,
+              stashHash: continueStash,
+              stashApplied: true,
+            }
+          }
+        }
+      }
+    }
+    throw commandFailure(args, result)
   }
 
   const handlers = {
@@ -1279,17 +1515,39 @@ export function createOperations(deps) {
       if (outerSignal.aborted) controller.abort()
       else outerSignal.addEventListener('abort', onAbort, { once: true })
     }
-    const timer = setTimeout(() => controller.abort(), timeout)
-    try {
-      return await handlers[op](params, controller.signal)
-    } catch (error) {
-      if (error instanceof GitError) throw error
-      if (controller.signal.aborted) {
-        throw new GitError(`git ${op} 超时（${timeout}ms）或被取消`, { code: 'timeout' })
+    // The timeout starts once this request owns the repo, so a queued click
+    // does not expire while an earlier sync is still running.
+    const execute = async () => {
+      const timer = setTimeout(() => controller.abort(), timeout)
+      try {
+        const task = () => handlers[op](params, controller.signal)
+        return LOCK_RETRY_OPS.has(op)
+          ? await retryWhileLocked(task, controller.signal)
+          : await task()
+      } catch (error) {
+        if (error instanceof GitError) {
+          if (LOCK_ERROR_PATTERN.test(String(error.stderr || error.message || ''))) {
+            throw new GitError('仓库正在被另一个 git 进程使用（index.lock），请关闭它或稍后再试（插件已自动等待并重试）', {
+              code: 'locked', stderr: error.stderr, stdout: error.stdout, exitCode: error.exitCode,
+            })
+          }
+          throw error
+        }
+        if (controller.signal.aborted) {
+          throw new GitError(`git ${op} 超时（${timeout}ms）或被取消`, { code: 'timeout' })
+        }
+        throw new GitError(`git ${op} 失败：${brief(error?.message ?? error, 800)}`, { code: 'internal' })
+      } finally {
+        clearTimeout(timer)
       }
-      throw new GitError(`git ${op} 失败：${brief(error?.message ?? error, 800)}`, { code: 'internal' })
+    }
+    try {
+      if (LOCKED_OPS.has(op) && typeof params.cwd === 'string' && isAbsolute(params.cwd)) {
+        const resolved = await repoRoot(params.cwd, controller.signal)
+        return await withRepoLock(resolved.root || `path:${params.cwd}`, execute)
+      }
+      return await execute()
     } finally {
-      clearTimeout(timer)
       if (outerSignal) outerSignal.removeEventListener('abort', onAbort)
     }
   }
