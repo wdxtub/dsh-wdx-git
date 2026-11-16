@@ -1,223 +1,187 @@
 # WDX Git
 
-**Git，不再打断你的 AI 会话。**
+**Git without leaving your AI session.**
 
-WDX Git 是 DeepSeek Harness 里的 Git 面板：右栏管当前会话的仓库，左侧栏的全局页
-一次列出所有工作区。AI 改完代码，你不需要切到终端，
-也不需要在一排 Pull / Push / Fetch 按钮里做选择：一个同步按钮完成拉取、合并和推送，
-并会按仓库状态显示 **Fetch origin / Pull origin / Push origin / Publish branch / Sync**；
-提交页默认打开，改动默认全选；提交信息可以让 AI 顺手写好。
+WDX Git is a Git panel for DeepSeek Harness: the right sidebar manages the repository for the current session, and the global page in the left sidebar lists every workspace at once. After AI edits, you don't need to switch to a terminal, or choose between a row of Pull / Push / Fetch buttons: one sync button pulls, merges, and pushes, and it labels itself from the repository state — **Fetch origin / Pull origin / Push origin / Publish branch / Sync**. The Commit tab opens by default with every change checked, and AI can write the commit message for you.
 
 > DSH 0.2.x · macOS / Windows / Linux · MIT
 
-![WDX Git 提交页](assets/screenshots/01-commit.png)
+![WDX Git commit tab](assets/screenshots/01-commit.png)
 
-## 为什么做 WDX Git
+## Why WDX Git
 
-AI 让写代码变快了，但 Git 流程还是旧的：
+AI made writing code faster, but the Git flow is still the old one:
 
-- 改完要切终端，记 `pull`、`merge`、`push`；
-- 回来还要想哪些文件该 stage、提交信息怎么写；
-- 冲突了再切工具，处理完已经忘了刚才在做什么。
+- After editing, switch to a terminal and remember `pull`, `merge`, `push`;
+- Come back and decide which files to stage and how to write the commit message;
+- On conflict, switch tools again, and by the time it's resolved you've forgotten what you were doing.
 
-WDX Git 把这段流程留在会话旁边，只保留真正需要你做的决定：
+WDX Git keeps that flow next to the session and leaves only the decisions that genuinely need you:
 
-| 常见流程 | WDX Git |
+| Common flow | WDX Git |
 | --- | --- |
-| 先 Fetch，再判断 Pull / Push | 顶栏按钮自动显示 Fetch / Pull / Push，点一下完成需要的事 |
-| 手动勾选要提交的文件 | 默认全选，不想提交的再取消 |
-| 手写提交信息 | AI 读本次 diff，按仓库风格写 |
-| 冲突时切到外部工具 | 在面板里看 ours / theirs，解决后继续 |
+| Fetch first, then decide Pull / Push | The toolbar button shows Fetch / Pull / Push automatically; one click does what's needed |
+| Manually check the files to commit | Everything is checked by default; uncheck what you don't want to commit |
+| Write the commit message yourself | AI reads this diff and writes it in the repository's style |
+| Switch to an external tool on conflict | See ours / theirs in the panel and continue after resolving |
 
-它不是另一个 GitHub Desktop，而是把 GitHub Desktop 最顺手的部分带进 DSH。
+It's not another GitHub Desktop; it brings the smoothest parts of GitHub Desktop into DSH.
 
-## 适合谁
+## Who it's for
 
-- 在 DSH 里用 AI 写代码、改文档，提交频率高的人；
-- 不想为了 `pull` / `push` / stage 反复切到终端的人；
-- 希望提交信息规范、但不想每次都手写的人；
-- 喜欢 GitHub Desktop 的顺手，但希望它长在 AI 会话旁边的人。
+- People who write code and edit docs with AI in DSH and commit often;
+- People who don't want to switch to a terminal repeatedly for `pull` / `push` / staging;
+- People who want consistent commit messages without writing each one by hand;
+- People who like how GitHub Desktop feels but want it next to their AI session.
 
-## 三个核心体验
+## Three core experiences
 
-### 一个按钮，完成同步
+### One button for sync
 
-顶栏只有仓库、分支和一个同步按钮。按钮会按仓库状态显示：
+The toolbar shows only the repository, the branch, and one sync button. The label follows the repository state:
 
-| 状态 | 按钮 |
+| State | Button |
 | --- | --- |
-| 已同步 | Fetch origin |
-| 只落后远端 | Pull origin |
-| 只有本地提交 | Push origin |
-| 两边都有新提交 | Sync |
-| 还没有 upstream | Publish branch |
+| In sync | Fetch origin |
+| Behind the remote only | Pull origin |
+| Local commits only | Push origin |
+| New commits on both sides | Sync |
+| No upstream yet | Publish branch |
 
-落后或领先远端时，按钮内会出现带方向箭头的计数徽标：`↓` 是待拉取的远端提交，
-`↑` 是待推送的本地提交。
+When the branch is behind or ahead, the button shows count badges with directional arrows: `↓` for remote commits to pull, `↑` for local commits to push.
 
-不管显示哪一个，点下去都由 WDX Git 完成：
+Whatever the label, one click lets WDX Git do the work:
 
 ```
-fetch → 补 upstream → 快进或合并 → 需要时推送
-冲突 → 解决 → continue / 恢复 stash → 推送
+fetch → set upstream if needed → fast-forward or merge → push when needed
+conflict → resolve → continue / restore stash → push
 ```
 
-工作区有改动时先自动 stash，合并后恢复；推送被拒时自动合并并按需重试（最多 4 轮）。
-冲突时停下来等你处理，处理完自动继续和推送，不用懂 commit / continue / stash。
-**不 force push，不自动 rebase，不改写已有历史。**
+Working-tree changes are stashed automatically before a merge and restored afterwards. A rejected push is fetched + merged and retried (up to 4 rounds). On conflict it stops and waits for you; once you've resolved it, it continues and pushes automatically — no need to understand commit / continue / stash. **No force push, no automatic rebase, no rewriting existing history.**
 
-### 提交页先出现，改动默认全选
+### Commit tab first, changes checked by default
 
-打开面板先看到提交表单：通用提交者图标和 Summary 一行，Description 单独一行，
-AI 区域和提交按钮依次排开。所有改动默认勾选；取消某个文件，它就只留在工作区，
-不会进入这次提交。
+Opening the panel shows the commit form: a generic committer icon and a Summary line, Description on its own line, then the AI area and the commit button. Every change is checked by default; unchecking a file leaves it in the working tree and out of this commit.
 
-提交时只暂存选中的路径。想全部提交，直接写标题、点按钮；想精细一点，
-去「变更」里取消勾选即可。
+Only the checked paths are staged. To commit everything, just write the title and click; to be more selective, uncheck files under "Changes".
 
-### AI 写提交信息，但不替你做决定
+### AI writes the commit message, but doesn't decide for you
 
-- 一次生成标题 + 正文：正文按 PR 摘要的密度写——一句动机，再 2–4 条具体改动；涉及测试时说明覆盖范围，不写空话；
-- 格式不合格（被截断、标题半句、缺正文）会自动重试，最多 3 次；仍不行为你保留可提交的降级文案；
-- 默认跟随当前会话模型，思考等级自动压低；也可以在设置里换成更便宜的模型；
-- 只读取本次会提交的 diff 和文件；取消勾选的文件不会出现在提交信息里。
+- One request writes subject + body: the body is written at pull-request-summary density — one sentence of motivation, then 2–4 concrete changes; when tests are involved it says what's covered, with no filler.
+- If the format is broken (truncated, a half-sentence subject, missing body), it retries automatically, up to 3 times; if it still fails you get a commit-ready fallback message.
+- It follows the current session model by default, with reasoning effort automatically lowered; you can also pick a cheaper model in settings.
+- It reads only the diff and files for this commit; unchecked files never appear in the message.
 
-AI 只负责生成内容。提交、推送和冲突文件的写入，都在你点下按钮后执行。
+AI only generates content. Staging, committing, pushing, and writing conflict resolutions all happen after you click.
 
-## 一眼看懂
+## At a glance
 
-| 变更：默认全选 | 差异：词级高亮 |
+| Changes: checked by default | Diff: word-level highlight |
 | --- | --- |
-| ![变更](assets/screenshots/02-changes.png) | ![差异](assets/screenshots/03-diff.png) |
+| ![Changes](assets/screenshots/02-changes.png) | ![Diff](assets/screenshots/03-diff.png) |
 
-| 历史：SVG 车道图 | 分支与 Stash |
+| History: SVG lanes | Branches and stash |
 | --- | --- |
-| ![历史](assets/screenshots/04-history.png) | ![分支](assets/screenshots/05-branches.png) |
+| ![History](assets/screenshots/04-history.png) | ![Branches](assets/screenshots/05-branches.png) |
 
-| AI 与同步设置 | 冲突解决 |
+| AI and sync settings | Conflict resolution |
 | --- | --- |
-| ![设置](assets/screenshots/06-settings.png) | ![冲突](assets/screenshots/07-conflict.png) |
+| ![Settings](assets/screenshots/06-settings.png) | ![Conflict](assets/screenshots/07-conflict.png) |
 
-## 还有这些
+## Also in there
 
-- **跨项目仓库页**：左侧栏的 **Git** 入口列出当前 DSH 里所有工作区，像 GitHub Desktop
-  一样按父目录分组，显示分支、ahead/behind 和改动数；点开任意仓库就能直接提交，不必先
-  进项目新建会话。概览每 30 秒刷新一次；手动刷新时按钮会旋转，完成后显示绿色对勾和
-  更新结果，有变化的仓库行会短暂高亮。
+- **Cross-project repositories page**: the **Git** entry in the left sidebar lists every workspace in the current DSH, grouped by parent folder like GitHub Desktop, with branch, ahead/behind, and change counts; open any repository to commit directly without starting a session in that project first. The overview refreshes every 30 seconds; a manual refresh spins the button, then shows a green check and the result, and changed rows highlight briefly.
 
-![跨项目仓库页](assets/screenshots/08-global.png)
+![Cross-project repositories page](assets/screenshots/08-global.png)
 
-- **一体化界面**：顶栏、tab、内容共用一层背景，没有卡片和外框；颜色全部来自
-  DSH 主题 token，深浅主题自动适配。
-- **变更、历史、分支、差异**：逐文件查看、提交搜索、所有分支 / 当前分支切换、
-  SVG 提交车道图。
-- **冲突不硬来**：可看 ours ↔ theirs，AI 生成合并建议（只预览，确认后才写入）、
-  一键「AI 解决全部」逐个文件自动合并并暂存（大文件按冲突块处理），也可取某一侧
-  或手工标记已解决；设置里可打开「冲突后自动用 AI 解决」（默认关闭），同步一产生
-  冲突就自动处理。最后一项冲突解决后自动 commit merge / continue rebase、恢复自动
-  stash，并按最初的 Sync / Push 意图自动推送；仍支持中止 / 继续。
-- **系统代理**：macOS 自动读取系统 HTTP/HTTPS 代理，Finder 启动的 DSH 也能正常
-  fetch / push；也尊重你已有的代理环境变量。
-- **数据留在本地**：Git 操作、历史、分支、stash 都在你本机；插件不保存 token，
-  也不做遥测。
-- **头像不读个人资料**：提交表单左侧是 wdxtub-blog 的 W 标记（单色简化版，保留右上角小装饰），
-  不读取、不展示你的 DSH 账户头像或 GitHub 头像。
+- **Integrated UI**: the toolbar, tabs, and content share one background, with no cards or borders; all colors come from DSH theme tokens, adapting automatically to light and dark themes.
+- **Changes, history, branches, diff**: per-file views, commit search, all-branches / current-branch switching, and an SVG commit lane graph.
+- **Conflicts without forcing**: view ours ↔ theirs, get an AI merge suggestion (preview only; nothing is written until you confirm), or use "Resolve all with AI" to merge and stage files one by one (large files are handled per conflict region); take one side or mark a file resolved by hand. Settings has "Resolve conflicts with AI after sync" (off by default) so a sync conflict is handled immediately. After the last conflict is resolved it automatically commits the merge / continues the rebase, restores the auto-stash, and pushes according to the original Sync / Push intent; abort / continue are still supported.
+- **System proxy**: on macOS it reads the system HTTP/HTTPS proxy automatically, so a DSH started from Finder can still fetch / push; it also respects your existing proxy environment variables.
+- **Data stays local**: Git operations, history, branches, and stash stay on your machine; the plugin stores no tokens and does no telemetry.
+- **No profile avatars**: the left side of the commit form is the wdxtub-blog W mark (a monochrome simplified version, keeping the small top-right flourish); it does not read or show your DSH account avatar or GitHub avatar.
 
-## 安装
+## Install
 
-### 从插件页安装
+### From the plugins page
 
-打开 DSH 侧栏 **插件** → **添加插件**，输入包名：
+Open **Plugins → Add plugin** in the DSH sidebar and enter the package name:
 
 ```
 dsh-wdx-git
 ```
 
-安装源选 npm 官方源，装好后点 **立即启用**。如果镜像还没同步，切换安装源再试一次即可。
+Choose the npm official registry as the install source, then enable it. If the mirror isn't synced yet, switch the install source and try again.
 
-npm 包主页：<https://www.npmjs.com/package/dsh-wdx-git>
+npm package page: <https://www.npmjs.com/package/dsh-wdx-git>
 
-### 从源码安装
+### From source
 
 ```bash
 git clone https://github.com/wdxtub/dsh-wdx-git.git
 dsh plugin --profile desktop add ./dsh-wdx-git
 ```
 
-安装后刷新页面。入口有三个：
+Refresh the page after installing. There are three entry points:
 
-1. 左侧栏的 **Git**（全局仓库页）；
-2. 会话头部工具栏的 **Git 分支图标**；
-3. 右栏的 **+ → 开始** →「WDX Git」。
+1. **Git** in the left sidebar (global repositories page);
+2. The **Git branch icon** in the session header toolbar;
+3. The right sidebar's **+ → Start → "WDX Git"**.
 
-> 更新了 Host 代码（`index.js` / `src/`）后，重开一次 DSH 让 Host 重新加载；
-> 只刷新页面只会更新客户端。
+> After updating Host code (`index.js` / `src/`), reopen DSH so the Host reloads; refreshing the page only updates the client.
 
-## 上手
+## Getting started
 
-1. 打开任意会话的 Git 面板；默认就在「提交」。
-2. 顶栏按钮会显示 **Fetch origin / Pull origin / Push origin / Sync**，点一下同步远端；
-   需要时它会自动合并、推送。
-3. 写 Summary，或者点 **AI 生成**。
-4. 点「提交 N 个文件到 main」；勾选「提交后推送」可以接着同步。
+1. Open the Git panel for any session; it opens on "Commit" by default.
+2. The toolbar shows **Fetch origin / Pull origin / Push origin / Sync**; click to sync with the remote. It merges and pushes automatically when needed.
+3. Write a Summary, or click **Generate with AI**.
+4. Click "Commit N files to main"; check "Push after commit" to sync next.
 
-## 常见问题
+## FAQ
 
-**Q：顶栏按钮为什么会变？**
+**Q: Why does the toolbar button change?**
 
-A：它只反映一件事：点下去主要会发生什么。已同步是 Fetch origin，落后是 Pull origin，
-有本地提交是 Push origin，两边都有是 Sync，没有 upstream 是 Publish branch。
-按钮内会显示上次 fetch，以及带方向箭头的领先 / 落后计数徽标；仓库行显示 upstream。
-点下之后，状态栏会告诉你这次是 fetch、merge 还是 push，以及是否动过 stash。
+A: It reflects one thing only: what a click will mainly do. In sync is Fetch origin, behind is Pull origin, local commits is Push origin, both sides is Sync, and no upstream is Publish branch. The button shows the last fetch time and ahead/behind count badges with directional arrows; the repository row shows the upstream. After clicking, the status line tells you whether it fetched, merged, or pushed, and whether it touched the stash.
 
-**Q：会不会自动 force push？**
+**Q: Does it ever force push?**
 
-A：不会。远端前进导致 push 被拒时，只 fetch + merge + 重试一次；再失败就把
-git 的错误原样告诉你。也不会自动 rebase 或改写历史。
+A: No. When the remote has advanced and the push is rejected, it only fetches + merges + retries once; if that fails it shows you git's own error. It never rebases automatically or rewrites history.
 
-**Q：AI 会看到我的整个仓库吗？**
+**Q: Can AI see my whole repository?**
 
-A：不会。它看到的是本次待提交的 diff、文件列表、最近提交标题，以及选中的
-未跟踪文本文件。请求发送给你在设置里选择的模型服务商。
+A: No. It sees the diff for this commit, the file list, recent commit titles, and the selected untracked text files. Requests go to the model provider you chose in settings.
 
-**Q：私有仓库能用吗？**
+**Q: Does it work with private repositories?**
 
-A：能。WDX Git 使用你本机已有的 git 凭据；能在这台机器上用 git 访问的仓库，
-面板就能用。
+A: Yes. WDX Git uses your machine's existing git credentials; any repository git can reach on this machine works in the panel.
 
-**Q：代理怎么处理？**
+**Q: How are proxies handled?**
 
-A：macOS 下自动读取系统代理；其他平台使用 `HTTPS_PROXY` / `HTTP_PROXY` /
-`ALL_PROXY`，或 git 自身的 `http.proxy` 配置。
+A: On macOS it reads the system proxy automatically; other platforms use `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`, or git's own `http.proxy` configuration.
 
-**Q：冲突怎么办？**
+**Q: What about conflicts?**
 
-A：同步遇到冲突会停下来等你处理，不会在你没动手时合并。你可以在面板里看两边差异、
-取某一侧，点「AI 解决全部」让它逐个文件合并并暂存（大文件按冲突块逐个解决），或
-手工改完后「标记为已解决」。全部解决后插件自动 create merge commit / continue
-rebase、把自动 stash 的本地改动放回，并按最初的动作自动推送。
+A: A conflict during sync stops and waits for you; it won't merge before you act. In the panel you can view both sides, take one, click "Resolve all with AI" to merge and stage files one by one (large files are resolved per conflict region), or edit by hand and "Mark as resolved". Once everything is resolved, the plugin automatically creates the merge commit / continues the rebase, restores the auto-stashed local changes, and pushes according to the original action.
 
-**Q：和 GitHub Desktop 是什么关系？**
+**Q: What's the relationship to GitHub Desktop?**
 
-A：交互灵感来自 GitHub Desktop，但这是为 DSH 会话重新设计的原生面板：
-一个按钮、默认提交、默认全选，不替代你现有的 Git 工作流。
+A: The interaction is inspired by GitHub Desktop, but this is a native panel redesigned for DSH sessions: one button, default commit, default-checked changes — it doesn't replace your existing Git workflow.
 
-## 我们刻意不做
+## What we deliberately don't do
 
-- 不 force push，不自动 rebase，不改写提交历史；
-- 不绕过 hooks，不做 commit signing；
-- 不做 hunk 级 / 行级 partial staging（选择到文件级）；
-- 不做远端选择 UI：多远端时优先 `origin`；
-- 不在后台静默提交；冲突解决后的 commit / continue 只在你处理完冲突（或点了
-  「AI 解决」）之后发生。
+- No force push, no automatic rebase, no rewriting commit history;
+- No bypassing hooks, no commit signing;
+- No hunk-level / line-level partial staging (down to file level);
+- No remote picker UI: with multiple remotes, `origin` is preferred;
+- No background commits: the commit / continue after conflict resolution happens only after you've resolved the conflict (or clicked "Resolve with AI").
 
-## 开发者
+## Developers
 
-- RPC、数据结构和 Host ↔ Client 契约：[PROTOCOL.md](PROTOCOL.md)
-- 版本记录：[CHANGELOG.md](CHANGELOG.md)
-- 发布流程：[RELEASING.md](RELEASING.md)
-- 运行测试：`npm test`（当前 55 个测试）
-- 实现：Host 侧 `index.js` / `src/`，客户端单文件 `lib/client.js`，无构建步骤。
+- RPC, data structures, and the Host ↔ Client contract: [PROTOCOL.md](PROTOCOL.md)
+- Release history: [CHANGELOG.md](CHANGELOG.md)
+- Release process: [RELEASING.md](RELEASING.md)
+- Run tests: `npm test` (currently 63 tests)
+- Implementation: Host side `index.js` / `src/`, client in the single file `lib/client.js`, no build step.
 
 ## License
 
