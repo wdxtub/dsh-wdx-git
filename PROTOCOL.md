@@ -163,9 +163,38 @@ content-type: application/json
     "conflicted": 0, "inProgress": false
   },
   "user": { "name": "wdxtub", "email": "..." },
-  "commitPrompt": ""
+  "commitPrompt": "",
+  "background": null
 }
 ```
+
+`background` 是这个仓库当前（或最近一次）的后台 sync / push / pull 任务，没有任务时为
+`null`。字段与 `sync` 的返回一致，额外带 `id`、`mode`、`status`、`startedAt`、
+`finishedAt`、`error` 和 `errorCode`：
+
+```json
+{
+  "id": "task-3",
+  "mode": "sync",
+  "status": "running|done|conflict|failed",
+  "startedAt": 1720000000000,
+  "finishedAt": null,
+  "pushed": false,
+  "merged": null,
+  "stashed": false,
+  "conflict": false,
+  "conflictFiles": [],
+  "stashHash": null,
+  "stashRestoreConflict": false,
+  "stashRestoreFailed": false,
+  "output": "",
+  "error": null,
+  "errorCode": null
+}
+```
+
+任务结果保留 5 分钟，便于切走再切回来的面板补上提示；`status: "running"` 时顶栏显示
+后台进行中。
 
 `operation.rebase` 只以 `.git/rebase-merge` / `.git/rebase-apply` 状态目录是否存在为准；
 `REBASE_HEAD` 在 `rebase --continue` 成功后仍会被 git 保留，不能用来判断变基是否进行中。
@@ -175,7 +204,7 @@ content-type: application/json
 ```json
 { "repo": { "isRepo": false, "error": "<git stderr>" },
   "branches": [], "remotes": [], "stashes": [], "status": null,
-  "operation": null, "user": null, "commitPrompt": "" }
+  "operation": null, "user": null, "commitPrompt": "", "background": null }
 ```
 
 状态来源是 `git status --porcelain=v2 -z --branch --untracked-files=all`。
@@ -287,12 +316,18 @@ content-type: application/json
 参数：
 
 ```json
-{ "cwd": "/abs/repo", "mode": "sync|pull|push", "remote": "origin", "branch": "main", "autoStash": true }
+{ "cwd": "/abs/repo", "mode": "sync|pull|push", "remote": "origin", "branch": "main", "autoStash": true, "background": true }
 ```
 
 - `sync` 是默认；`pull` 只到合并为止；`push` 只推送（被拒时内部 fetch+合并+重试一次）。
 - `remote` / `branch` 可省略；省略时优先 `origin`，否则第一个远端。
 - `autoStash` 默认 true。
+- `background: true` 时请求立即返回 `{ background: true, task: <background> }`，真正的
+  sync 在 Host 里脱离这个请求运行（自己拿仓库锁和超时），**客户端切会话、切仓库或请求
+  被取消都不会中断它**；结果与冲突通过 `snapshot.background` 上报。同一仓库已有一个
+  运行中的后台任务时，再次请求返回那个任务而不新建。
+- 不带 `background` 时行为不变：等到操作完成再返回下面的结构（客户端只在完成冲突
+  收尾这一步用这条路径）。
 
 返回：
 
@@ -597,6 +632,10 @@ ctx.slots.inject('sidebar.panellist', () =>
   `commit` 会带 `paths` / `exclude`。列表不提供单独的 stage / unstage 按钮。
 - 轮询：每 8s `snapshot`（`document.hidden` 时跳过）；window focus 和
   visibilitychange 时刷新；写操作后立即刷新。
+- 同步由 Host 脱离请求运行：点同步或「提交后推送」时客户端只发起任务，随后每 1.5s
+  读一次 `snapshot` 直到任务结束（切仓库或 `document.hidden` 时停止这个轮询，Host
+  继续跑）；切回该仓库时下一次 snapshot 会补上结果提示。后台任务进行中顶栏同步按钮
+  显示「后台同步中 / 后台推送中」并保持旋转，其他写操作会被拦下并提示等它完成。
 - 所有样式都在组件内 `<style>`，class 前缀 `wx-`；颜色只用 DSH theme token，
   主色引用 `--dsw-alias-state-business-primary`，不硬编码品牌蓝。
 

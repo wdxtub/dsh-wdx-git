@@ -26,8 +26,10 @@ pushes when there is something to push. Working-tree changes are stashed before 
 merge and restored afterwards. A rejected push is fetched + merged and retried,
 up to four rounds. When conflicts appear, resolving the last one automatically continues the
 merge/rebase, restores the auto-stash, and pushes if the original click was
-Sync/Push — no extra "Continue" or "Push" click. WDX Git never force-pushes,
-rebases automatically, or rewrites existing history.
+Sync/Push — no extra "Continue" or "Push" click. Sync runs on the host, so switching
+to another session or repository right after committing does not cancel the push; the
+toolbar shows it is still running and reports the result when it finishes. WDX Git never
+force-pushes, rebases automatically, or rewrites existing history.
 
 ## All repositories
 

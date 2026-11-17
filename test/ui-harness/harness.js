@@ -4,6 +4,32 @@
   var conflictMode = params.has('conflict')
   var slowOverview = params.has('slow')
   var syncConflict = params.has('syncConflict')
+  var backgroundDemo = params.has('background')
+  var backgroundSeeded = false
+  var demoTaskId = 'task-demo-1'
+  var repoPath = '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git'
+  var otherPath = '/Users/wdxtub/Documents/WhatThey/wdxtub-blog'
+
+  function backgroundTask(mode, status, extra) {
+    var task = {
+      id: demoTaskId, mode: mode, status: status, startedAt: Date.now(), finishedAt: null,
+      pushed: false, merged: null, stashed: false, conflict: false, conflictFiles: [],
+      stashHash: null, stashRestoreConflict: false, stashRestoreFailed: false,
+      output: '', error: null, errorCode: null,
+    }
+    if (extra) {
+      Object.keys(extra).forEach(function (key) { task[key] = extra[key] })
+      task.finishedAt = Date.now()
+    }
+    return task
+  }
+
+  if (params.has('background') || params.has('syncConflict') || params.has('switchAway')
+    || params.has('autoCommitPush')) {
+    // Headless screenshots report the page as hidden, which the panel's polling
+    // respects; these demos need the polling loops to run.
+    Object.defineProperty(document, 'hidden', { configurable: true, get: function () { return false } })
+  }
   var stage = document.getElementById('stage')
   if (narrow) stage.classList.add('narrow')
   var fixtures = window.__FIXTURES__
@@ -24,8 +50,8 @@
 
   var workspaces = {
     items: [
-      { workspaceId: 'ws-git', path: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', title: 'dsh-wdx-git', sessionIds: [] },
-      { workspaceId: 'ws-blog', path: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', title: 'wdxtub-blog', sessionIds: [] },
+      { workspaceId: 'ws-git', path: repoPath, title: 'dsh-wdx-git', sessionIds: [] },
+      { workspaceId: 'ws-blog', path: otherPath, title: 'wdxtub-blog', sessionIds: [] },
       { workspaceId: 'ws-notes', path: '/Users/wdxtub/Documents/notes', title: 'notes', sessionIds: [] },
     ],
     archivedSessionIds: [],
@@ -34,6 +60,10 @@
     phase: 'ready',
     error: null,
   }
+  var sessionsState = {
+    byId: { 'session-1': { id: 'session-1', cwd: repoPath, title: 'dsh-wdx-git' } },
+  }
+  var sessionListeners = []
   var ctx = {
     effect: function (fn) { try { return fn() } catch (error) { console.error(error) } },
     get: function (name) {
@@ -59,9 +89,14 @@
     sessions: {
       list: {
         getSnapshot: function () {
-          return { byId: { 'session-1': { id: 'session-1', cwd: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', title: 'dsh-wdx-git' } } }
+          return sessionsState
         },
-        subscribe: function () { return function () {} },
+        subscribe: function (listener) {
+          sessionListeners.push(listener)
+          return function () {
+            sessionListeners = sessionListeners.filter(function (item) { return item !== listener })
+          }
+        },
       },
     },
     slots: {
@@ -80,6 +115,12 @@
   }
 
   function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms) }) }
+
+  /** Point the session at another repository, the way switching sessions does. */
+  function moveSession(path, title) {
+    sessionsState = { byId: { 'session-1': { id: 'session-1', cwd: path, title: title } } }
+    sessionListeners.forEach(function (listener) { listener() })
+  }
 
   function ok(data) {
     return { status: 200, ok: true, json: async function () { return { ok: true, data: data } } }
@@ -104,7 +145,30 @@
         ],
       })
     }
-    if (op === 'snapshot') return ok(snapshot)
+    if (op === 'snapshot') {
+      if (backgroundDemo && !backgroundSeeded) {
+        backgroundSeeded = true
+        snapshot.background = backgroundTask('push', 'running')
+        setTimeout(function () {
+          snapshot.background = backgroundTask('push', 'done', {
+            pushed: true, output: '(demo) push complete',
+          })
+        }, 1500)
+      }
+      // Later snapshots keep reporting whatever the task reached, so the panel
+      // sees running and then the finished task. A different repository reports
+      // its own state and no task of ours.
+      var shown = snapshot
+      if (request.cwd && request.cwd !== repoPath) {
+        shown = Object.assign({}, snapshot, {
+          repo: Object.assign({}, snapshot.repo, {
+            path: request.cwd, root: request.cwd, name: request.cwd.split('/').pop(),
+          }),
+          background: null,
+        })
+      }
+      return ok(shown)
+    }
     if (op === 'graph') return ok(fixtures.graph)
     if (op === 'models') return ok(fixtures.models)
     if (op === 'commitInfo') return ok(fixtures.commitInfo)
@@ -141,6 +205,30 @@
       return ok({ hash: 'abc1234', subject: request.message.split('\n')[0], branch: 'main', output: '[main abc1234] ' + request.message.split('\n')[0] })
     }
     if (op === 'sync' || op === 'pull' || op === 'push' || op === 'fetch') {
+      // The host answers at once and finishes the sync detached from the request,
+      // reported through the following snapshots.
+      if (op !== 'fetch' && request.background === true) {
+        var mode = request.mode || 'sync'
+        var runningTask = backgroundTask(mode, 'running')
+        snapshot.background = runningTask
+        setTimeout(function () {
+          snapshot.background = syncConflict
+            ? backgroundTask(mode, 'conflict', {
+              merged: 'merge', conflict: true, conflictFiles: ['docs/PROTOCOL.md'],
+              output: '(demo) merge conflict',
+            })
+            : backgroundTask(mode, 'done', {
+              merged: 'merge', pushed: true, output: '(demo) sync complete',
+            })
+          if (syncConflict) {
+            snapshot.status.conflicted = [{ path: 'docs/PROTOCOL.md', status: 'UU', x: 'U', y: 'U', oldPath: null }]
+          } else {
+            snapshot.repo.ahead = 0
+            snapshot.repo.behind = 0
+          }
+        }, 1500)
+        return ok({ background: true, task: runningTask })
+      }
       if (syncConflict && op !== 'fetch') {
         snapshot.status.conflicted = [{ path: 'docs/PROTOCOL.md', status: 'UU', x: 'U', y: 'U', oldPath: null }]
         return ok({
@@ -186,6 +274,36 @@
       var button = document.querySelector('.wx-global-refresh')
       if (button) button.click()
     }, 900)
+  }
+  if (params.has('autoSync')) {
+    setTimeout(function () {
+      var button = document.querySelector('.wx-sync-cell')
+      if (button) button.click()
+    }, 900)
+  }
+  if (params.has('autoCommitPush')) {
+    // The reported bug: commit with "push after commit" on, then switch to
+    // another repository. The push must keep running and report on the way back.
+    setTimeout(function () {
+      var box = document.querySelector('.wx-commit-options input[type="checkbox"]')
+      if (box && !box.checked) box.click()
+      var input = document.querySelector('.wx-summary-input')
+      if (input) {
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(input, 'feat: background push demo')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      setTimeout(function () {
+        var button = document.querySelector('.wx-commit-btn')
+        if (button) button.click()
+      }, 300)
+    }, 1200)
+  }
+  if (params.has('switchAway')) {
+    // Leave the repository while the background task is running, come back later,
+    // and check that the finished task is reported on the way back.
+    setTimeout(function () { moveSession(otherPath, 'wdxtub-blog') }, 2000)
+    setTimeout(function () { moveSession(repoPath, 'dsh-wdx-git') }, 6000)
   }
   setTimeout(function () { window.__READY__ = true }, 700)
 })()

@@ -22,8 +22,9 @@ WDX Git 在 DeepSeek Harness 右侧栏里加一个 Git 面板。从会话头部�
 点下去会 fetch、需要时补 upstream、快进或合并，有内容时再推送。工作区改动
 会在合并前自动 stash，合并后恢复。推送被拒时 fetch + merge 后重试，最多 4 轮。
 碰到冲突时，解决完最后一项会自动继续 merge / rebase、恢复自动 stash，并按最初的
-点击自动推送，不需要再点一次「继续」或「推送」。WDX Git 不 force push、不自动
-rebase，也不改写已有历史。
+点击自动推送，不需要再点一次「继续」或「推送」。同步在 Host 里独立运行，提交完
+马上切到另一个仓库也不会中断推送；顶栏会显示后台还在跑，跑完补上结果。
+WDX Git 不 force push、不自动 rebase，也不改写已有历史。
 
 ## 跨项目仓库
 

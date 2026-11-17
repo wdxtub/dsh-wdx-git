@@ -57,7 +57,7 @@ fetch → set upstream if needed → fast-forward or merge → push when needed
 conflict → resolve → continue / restore stash → push
 ```
 
-Working-tree changes are stashed automatically before a merge and restored afterwards. A rejected push is fetched + merged and retried (up to 4 rounds). On conflict it stops and waits for you; once you've resolved it, it continues and pushes automatically — no need to understand commit / continue / stash. **No force push, no automatic rebase, no rewriting existing history.**
+Working-tree changes are stashed automatically before a merge and restored afterwards. A rejected push is fetched + merged and retried (up to 4 rounds). On conflict it stops and waits for you; once you've resolved it, it continues and pushes automatically — no need to understand commit / continue / stash. Sync runs on the host, so switching to another session or repository right after you commit doesn't cancel the push; the toolbar shows it is still running and reports the result when it lands. **No force push, no automatic rebase, no rewriting existing history.**
 
 ### Commit tab first, changes checked by default
 

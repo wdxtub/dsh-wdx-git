@@ -1,0 +1,32 @@
+{
+  "id": "validate-841b7b9cf85637fc4cfee187c0b936c9",
+  "name": "fusion validate",
+  "command": "fusion_validate",
+  "description": "{\"acceptanceCriteria\":[\"提交后开启「提交后推送」时，推送在 Host 侧独立运行，切会话/切仓库/请求取消都不会中断它\",\"面板手动 Sync（以及 push/pull 的 background 入口）同样走 Host 后台任务\",\"切走再切回同一仓库时，已完成任务的结果会补上提示，且只报一次\",\"后台同步遇到冲突时停在冲突状态，切到「变更」列出冲突文件，解决后仍能自动 continue/恢复 stash/推送\",\"后台任务进行中顶栏显示进行中状态并旋",
+  "status": "failed",
+  "outputPath": ".pi/tasks/01a1e6e0-618b-7239-8480-a4ebf8eb2128-82239/validate-841b7b9cf85637fc4cfee187c0b936c9.output",
+  "cwd": "/Users/wdxtub/Documents/WhatThey/dsh-wdx-git",
+  "startTime": 1794886637621,
+  "endTime": 1794889638115,
+  "exitCode": null,
+  "signal": null,
+  "bytesWritten": 802,
+  "isAgent": true,
+  "surviveReload": false,
+  "error": "Fusion failed (stage=candidate, slot=3, attempt=1): Pi child timed out after 3000000ms\nRun progress from durable attempts: candidates=incomplete (3 created, 0 completed, 3 failed, 0 cancelled, 0 slot(s) not started); evaluation=not_started (0 created, 0 completed, 0 failed, 0 cancelled); merge=not_started (0 created, 0 completed, 0 failed, 0 cancelled). Usage so far: input=1229466, output=26271, cacheRead=6850, cacheWrite=0, reasoning=21788, totalTokens=1262587, cost.input=0.9835728000000001, cost.output=0.0709317, cost.cacheRead=0.0006850000000000001, cost.cacheWrite=0, cost.total=1.0551895000000002.\nArtifacts: .pi/fusion/01a1e6e0-618b-7239-8480-a4ebf8eb2128-82239/validate-841b7b9cf85637fc4cfee187c0b936c9",
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "fusion": {
+    "runId": "validate-841b7b9cf85637fc4cfee187c0b936c9",
+    "workflow": "validate",
+    "artifactDir": ".pi/fusion/01a1e6e0-618b-7239-8480-a4ebf8eb2128-82239/validate-841b7b9cf85637fc4cfee187c0b936c9",
+    "artifactDirAbs": "/Users/wdxtub/Documents/WhatThey/dsh-wdx-git/.pi/fusion/01a1e6e0-618b-7239-8480-a4ebf8eb2128-82239/validate-841b7b9cf85637fc4cfee187c0b936c9",
+    "state": "failed",
+    "usageDelivered": false,
+    "outcome": {
+      "status": "failed",
+      "error": "Fusion failed (stage=candidate, slot=3, attempt=1): Pi child timed out after 3000000ms\nRun progress from durable attempts: candidates=incomplete (3 created, 0 completed, 3 failed, 0 cancelled, 0 slot(s) not started); evaluation=not_started (0 created, 0 completed, 0 failed, 0 cancelled); merge=not_started (0 created, 0 completed, 0 failed, 0 cancelled). Usage so far: input=1229466, output=26271, cacheRead=6850, cacheWrite=0, reasoning=21788, totalTokens=1262587, cost.input=0.9835728000000001, cost.output=0.0709317, cost.cacheRead=0.0006850000000000001, cost.cacheWrite=0, cost.total=1.0551895000000002.\nArtifacts: .pi/fusion/01a1e6e0-618b-7239-8480-a4ebf8eb2128-82239/validate-841b7b9cf85637fc4cfee187c0b936c9"
+    }
+  }
+}

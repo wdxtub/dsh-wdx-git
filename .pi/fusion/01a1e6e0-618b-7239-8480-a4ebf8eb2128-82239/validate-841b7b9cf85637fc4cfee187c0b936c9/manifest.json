@@ -1,0 +1,254 @@
+{
+  "schema_version": "pi-background-tasks.fusion-manifest.v4",
+  "run_id": "validate-841b7b9cf85637fc4cfee187c0b936c9",
+  "workflow": "validate",
+  "source": "tool",
+  "state": "failed",
+  "created_at": "2026-11-17T03:37:17.577Z",
+  "updated_at": "2026-11-17T04:27:18.104Z",
+  "cwd": "/Users/wdxtub/Documents/WhatThey/dsh-wdx-git",
+  "config": {
+    "schema_version": "pi-background-tasks.fusion-models.v1",
+    "candidates": [
+      "$current",
+      "$current",
+      "$current"
+    ],
+    "evaluator": "$current",
+    "merger": "$current"
+  },
+  "models": {
+    "candidates": [
+      "magpie/n1-strata/gyro-gyro-m",
+      "magpie/n1-strata/gyro-gyro-m",
+      "magpie/n1-strata/gyro-gyro-m"
+    ],
+    "evaluator": "magpie/n1-strata/gyro-gyro-m",
+    "merger": "magpie/n1-strata/gyro-gyro-m",
+    "thinking_level": "high"
+  },
+  "capabilities": {
+    "candidate": "inspect",
+    "evaluation": "reason",
+    "merge": "reason"
+  },
+  "context": {
+    "kind": "clean_task",
+    "policy_id": "fusion-clean-task-v1"
+  },
+  "tool_policy": {
+    "candidate_tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "evaluation_tools": [],
+    "merge_tools": []
+  },
+  "usage": {
+    "input": 1229466,
+    "output": 26271,
+    "cacheRead": 6850,
+    "cacheWrite": 0,
+    "reasoning": 21788,
+    "totalTokens": 1262587,
+    "cost": {
+      "input": 0.9835728000000001,
+      "output": 0.0709317,
+      "cacheRead": 0.0006850000000000001,
+      "cacheWrite": 0,
+      "total": 1.0551895000000002
+    }
+  },
+  "attempts": [
+    {
+      "stage": "candidate",
+      "attempt": 1,
+      "status": "failed",
+      "child_created": true,
+      "prompt_path": "candidate-3.attempt-1.prompt.txt",
+      "events_path": "candidate-3.attempt-1.events.jsonl",
+      "stderr_path": "candidate-3.attempt-1.stderr.txt",
+      "response_path": "candidate-3.attempt-1.response.txt",
+      "error": "Pi child timed out after 3000000ms",
+      "provider": "magpie",
+      "model": "n1-strata/gyro-gyro-m",
+      "qualifiedId": "magpie/n1-strata/gyro-gyro-m",
+      "usage": {
+        "input": 441796,
+        "output": 6020,
+        "cacheRead": 3425,
+        "cacheWrite": 0,
+        "reasoning": 4946,
+        "totalTokens": 451241,
+        "cost": {
+          "input": 0.35343680000000005,
+          "output": 0.016253999999999998,
+          "cacheRead": 0.00034250000000000003,
+          "cacheWrite": 0,
+          "total": 0.37003330000000006
+        }
+      },
+      "slot": 3
+    },
+    {
+      "stage": "candidate",
+      "attempt": 1,
+      "status": "failed",
+      "child_created": true,
+      "prompt_path": "candidate-1.attempt-1.prompt.txt",
+      "events_path": "candidate-1.attempt-1.events.jsonl",
+      "stderr_path": "candidate-1.attempt-1.stderr.txt",
+      "response_path": "candidate-1.attempt-1.response.txt",
+      "error": "Pi child timed out after 3000000ms",
+      "provider": "magpie",
+      "model": "n1-strata/gyro-gyro-m",
+      "qualifiedId": "magpie/n1-strata/gyro-gyro-m",
+      "usage": {
+        "input": 376210,
+        "output": 13602,
+        "cacheRead": 3425,
+        "cacheWrite": 0,
+        "reasoning": 11634,
+        "totalTokens": 393237,
+        "cost": {
+          "input": 0.300968,
+          "output": 0.0367254,
+          "cacheRead": 0.00034250000000000003,
+          "cacheWrite": 0,
+          "total": 0.33803590000000006
+        }
+      },
+      "slot": 1
+    },
+    {
+      "stage": "candidate",
+      "attempt": 1,
+      "status": "failed",
+      "child_created": true,
+      "prompt_path": "candidate-2.attempt-1.prompt.txt",
+      "events_path": "candidate-2.attempt-1.events.jsonl",
+      "stderr_path": "candidate-2.attempt-1.stderr.txt",
+      "response_path": "candidate-2.attempt-1.response.txt",
+      "error": "Pi child timed out after 3000000ms",
+      "provider": "magpie",
+      "model": "n1-strata/gyro-gyro-m",
+      "qualifiedId": "magpie/n1-strata/gyro-gyro-m",
+      "usage": {
+        "input": 411460,
+        "output": 6649,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 5208,
+        "totalTokens": 418109,
+        "cost": {
+          "input": 0.32916800000000007,
+          "output": 0.0179523,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.3471203
+        }
+      },
+      "slot": 2
+    }
+  ],
+  "artifacts": {
+    "canonical-input.json": {
+      "path": "canonical-input.json",
+      "byte_length": 6285,
+      "sha256": "sha256:22a1114a85b12a84c9eefc1983bfebbe5f6b13dc0af03bac2a09141a400a4f0c"
+    },
+    "budget-plan.json": {
+      "path": "budget-plan.json",
+      "byte_length": 87198,
+      "sha256": "sha256:547e44ec8c3f74170a6d7623b9fc2326ab940bf95fe2849e25bd7adfd25c1168"
+    },
+    "candidate-3.attempt-1.system-prompt.txt": {
+      "path": "candidate-3.attempt-1.system-prompt.txt",
+      "byte_length": 3751,
+      "sha256": "sha256:0c67c849ee295c39a6ffcce24f67bd8399cf3919b671342545d9cf5e893daf47"
+    },
+    "candidate-1.attempt-1.system-prompt.txt": {
+      "path": "candidate-1.attempt-1.system-prompt.txt",
+      "byte_length": 3751,
+      "sha256": "sha256:0c67c849ee295c39a6ffcce24f67bd8399cf3919b671342545d9cf5e893daf47"
+    },
+    "candidate-2.attempt-1.system-prompt.txt": {
+      "path": "candidate-2.attempt-1.system-prompt.txt",
+      "byte_length": 3751,
+      "sha256": "sha256:0c67c849ee295c39a6ffcce24f67bd8399cf3919b671342545d9cf5e893daf47"
+    },
+    "candidate-3.attempt-1.prompt.txt": {
+      "path": "candidate-3.attempt-1.prompt.txt",
+      "byte_length": 6285,
+      "sha256": "sha256:22a1114a85b12a84c9eefc1983bfebbe5f6b13dc0af03bac2a09141a400a4f0c"
+    },
+    "candidate-1.attempt-1.prompt.txt": {
+      "path": "candidate-1.attempt-1.prompt.txt",
+      "byte_length": 6285,
+      "sha256": "sha256:22a1114a85b12a84c9eefc1983bfebbe5f6b13dc0af03bac2a09141a400a4f0c"
+    },
+    "candidate-2.attempt-1.prompt.txt": {
+      "path": "candidate-2.attempt-1.prompt.txt",
+      "byte_length": 6285,
+      "sha256": "sha256:22a1114a85b12a84c9eefc1983bfebbe5f6b13dc0af03bac2a09141a400a4f0c"
+    },
+    "candidate-3.attempt-1.events.jsonl": {
+      "path": "candidate-3.attempt-1.events.jsonl",
+      "byte_length": 12999,
+      "sha256": "sha256:fdb9013e022202714b2a60983cb0e32d99a85baf1284cc881bb929bc1e32a66c"
+    },
+    "candidate-1.attempt-1.events.jsonl": {
+      "path": "candidate-1.attempt-1.events.jsonl",
+      "byte_length": 13780,
+      "sha256": "sha256:bbda8c54d41f4772c13fa29a1cf54df6b7fd5e838a88246123f3d41fef44d3ef"
+    },
+    "candidate-2.attempt-1.events.jsonl": {
+      "path": "candidate-2.attempt-1.events.jsonl",
+      "byte_length": 11424,
+      "sha256": "sha256:6775a64c9a0286cb26167acf11d2ac5b77eac3067a05b028236a32aa6db0a932"
+    },
+    "candidate-3.attempt-1.stderr.txt": {
+      "path": "candidate-3.attempt-1.stderr.txt",
+      "byte_length": 63,
+      "sha256": "sha256:5778d729b5697f72a2accfd655cdd720ba33a323eb11b5e0341634d01d1bcbf4"
+    },
+    "candidate-1.attempt-1.stderr.txt": {
+      "path": "candidate-1.attempt-1.stderr.txt",
+      "byte_length": 63,
+      "sha256": "sha256:5778d729b5697f72a2accfd655cdd720ba33a323eb11b5e0341634d01d1bcbf4"
+    },
+    "candidate-2.attempt-1.stderr.txt": {
+      "path": "candidate-2.attempt-1.stderr.txt",
+      "byte_length": 63,
+      "sha256": "sha256:5778d729b5697f72a2accfd655cdd720ba33a323eb11b5e0341634d01d1bcbf4"
+    },
+    "candidate-3.attempt-1.response.txt": {
+      "path": "candidate-3.attempt-1.response.txt",
+      "byte_length": 0,
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate-1.attempt-1.response.txt": {
+      "path": "candidate-1.attempt-1.response.txt",
+      "byte_length": 0,
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate-2.attempt-1.response.txt": {
+      "path": "candidate-2.attempt-1.response.txt",
+      "byte_length": 0,
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "error.json": {
+      "path": "error.json",
+      "byte_length": 596,
+      "sha256": "sha256:cd0af1e2c81c817d02460c205795bc597d8b92c458b9cb0dfd140cd51f01209a"
+    },
+    "failure-summary.json": {
+      "path": "failure-summary.json",
+      "byte_length": 6649,
+      "sha256": "sha256:c85161780ef0eb2ed7cb598aab37560bf631926d935d3d94b99ed757eefe93b4"
+    }
+  },
+  "error": "Pi child timed out after 3000000ms\nRun progress from durable attempts: candidates=incomplete (3 created, 0 completed, 3 failed, 0 cancelled, 0 slot(s) not started); evaluation=not_started (0 created, 0 completed, 0 failed, 0 cancelled); merge=not_started (0 created, 0 completed, 0 failed, 0 cancelled). Usage so far: input=1229466, output=26271, cacheRead=6850, cacheWrite=0, reasoning=21788, totalTokens=1262587, cost.input=0.9835728000000001, cost.output=0.0709317, cost.cacheRead=0.0006850000000000001, cost.cacheWrite=0, cost.total=1.0551895000000002."
+}

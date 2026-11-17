@@ -106,6 +106,43 @@ const LOCKED_OPS = new Set([
 const CONTINUE_STASH_MESSAGE = 'wdx-git: auto-stash before continue'
 
 /**
+ * Detached sync / push tasks.
+ *
+ * A push started from the panel must survive the panel: switching sessions or
+ * repositories cancels the HTTP request, which used to cancel the push. The
+ * work therefore runs on its own signal, holds the repository lock, and
+ * reports its status through `snapshot` so any panel can pick it up.
+ */
+const backgroundTasks = new Map()
+const BACKGROUND_RESULT_TTL = 5 * 60 * 1000
+let backgroundSeq = 0
+
+/** JSON view of a task for the panel; null when the repository has none. */
+function backgroundSummary(task) {
+  if (!task) return null
+  const result = task.result
+  const error = task.error
+  return {
+    id: task.id,
+    mode: task.mode,
+    status: task.status,
+    startedAt: task.startedAt,
+    finishedAt: task.finishedAt,
+    pushed: result ? result.pushed === true : false,
+    merged: result && result.merged ? result.merged : null,
+    stashed: result ? result.stashed === true : false,
+    conflict: result ? result.conflict === true : false,
+    conflictFiles: result && Array.isArray(result.conflictFiles) ? result.conflictFiles : [],
+    stashHash: result && result.stashHash ? result.stashHash : null,
+    stashRestoreConflict: result ? result.stashRestoreConflict === true : false,
+    stashRestoreFailed: result ? result.stashRestoreFailed === true : false,
+    output: result ? String(result.output || '') : (error ? String(error.message || '') : ''),
+    error: error ? String(error.message || '') : null,
+    errorCode: error ? error.code : null,
+  }
+}
+
+/**
  * Retrying is only safe for handlers that consist of one atomic git step. A
  * sync/continue/push that already stashed or merged part of its work must not
  * be replayed blindly on a lock error.
@@ -434,7 +471,7 @@ export function createOperations(deps) {
       return {
         repo: { isRepo: false, error: resolved.error },
         branches: [], remotes: [], stashes: [], status: null,
-        operation: null, user: null, commitPrompt: '',
+        operation: null, user: null, commitPrompt: '', background: null,
       }
     }
     const root = resolved.root
@@ -491,6 +528,7 @@ export function createOperations(deps) {
         email: userEmailRaw.code === 0 ? userEmailRaw.stdout.trim() : '',
       },
       commitPrompt: promptRaw.code === 0 ? promptRaw.stdout.trim() : '',
+      background: backgroundSummary(backgroundTasks.get(root)),
     }
   }
 
@@ -853,6 +891,60 @@ export function createOperations(deps) {
 
   async function pull(params, signal) {
     return sync({ ...params, mode: 'pull' }, signal)
+  }
+
+  /**
+   * Start a sync/push/pull that is not tied to the request, and answer at once.
+   * The panel follows it through `snapshot`, so switching sessions or
+   * repositories neither cancels it nor loses its result.
+   */
+  async function startBackground(op, params) {
+    const cwd = assertCwd(params.cwd)
+    const root = await requireRepo(cwd)
+    const running = backgroundTasks.get(root)
+    // One task per repository: a request while it runs reports the existing task
+    // instead of starting a second sync on the same repo.
+    if (running && running.status === 'running') {
+      return { background: true, task: backgroundSummary(running) }
+    }
+    for (const [key, task] of backgroundTasks) {
+      if (task.status !== 'running' && task.finishedAt !== null
+        && Date.now() - task.finishedAt > BACKGROUND_RESULT_TTL) backgroundTasks.delete(key)
+    }
+    const mode = op === 'pull' ? 'pull'
+      : op === 'push' ? 'push'
+        : params.mode === 'pull' || params.mode === 'push' ? params.mode : 'sync'
+    const task = {
+      id: `task-${++backgroundSeq}`,
+      mode,
+      startedAt: Date.now(),
+      finishedAt: null,
+      status: 'running',
+      result: null,
+      error: null,
+    }
+    backgroundTasks.set(root, task)
+    void withRepoLock(root, async () => {
+      // The timeout starts once the task owns the repo, so a task queued behind
+      // an earlier sync does not expire while it is still waiting.
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeouts.sync)
+      try {
+        const result = await sync({ ...params, cwd: root, mode }, controller.signal)
+        task.result = result
+        task.status = result.conflict === true ? 'conflict' : 'done'
+      } catch (error) {
+        task.error = {
+          code: error instanceof GitError ? error.code : 'internal',
+          message: error && error.message ? String(error.message) : String(error),
+        }
+        task.status = 'failed'
+      } finally {
+        clearTimeout(timer)
+        task.finishedAt = Date.now()
+      }
+    })
+    return { background: true, task: backgroundSummary(task) }
   }
 
   function assertStashIndex(value) {
@@ -1493,6 +1585,9 @@ export function createOperations(deps) {
     }
     if (params === null || typeof params !== 'object' || Array.isArray(params)) {
       throw new GitError('参数必须是 JSON 对象', { code: 'invalid-params' })
+    }
+    if (op === 'sync' || op === 'push' || op === 'pull') {
+      if (params.background === true) return await startBackground(op, params)
     }
     const timeout = op === 'sync' || op === 'pull' || op === 'push'
       ? timeouts.sync
