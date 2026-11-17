@@ -1,4 +1,0 @@
-{
-  "state": "failed",
-  "error": "Pi child timed out after 3000000ms\nRun progress from durable attempts: candidates=incomplete (3 created, 0 completed, 3 failed, 0 cancelled, 0 slot(s) not started); evaluation=not_started (0 created, 0 completed, 0 failed, 0 cancelled); merge=not_started (0 created, 0 completed, 0 failed, 0 cancelled). Usage so far: input=1229466, output=26271, cacheRead=6850, cacheWrite=0, reasoning=21788, totalTokens=1262587, cost.input=0.9835728000000001, cost.output=0.0709317, cost.cacheRead=0.0006850000000000001, cost.cacheWrite=0, cost.total=1.0551895000000002."
-}
