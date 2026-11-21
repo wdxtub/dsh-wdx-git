@@ -47,8 +47,12 @@ The toolbar shows only the repository, the branch, and one sync button. The labe
 | Local commits only | Push origin |
 | New commits on both sides | Sync |
 | No upstream yet | Publish branch |
+| Upstream branch deleted | Republish branch |
+| No remote configured | No remote (disabled; add `origin` first) |
 
 When the branch is behind or ahead, the button shows count badges with directional arrows: `↓` for remote commits to pull, `↑` for local commits to push.
+
+If the repository has no remote, the button is disabled and the panel explains how to add one. A branch whose upstream disappeared switches to **Republish branch** and marks the missing upstream in the header.
 
 Whatever the label, one click lets WDX Git do the work:
 
@@ -90,7 +94,7 @@ AI only generates content. Staging, committing, pushing, and writing conflict re
 
 ## Also in there
 
-- **Cross-project repositories page**: the **Git** entry in the left sidebar lists every workspace in the current DSH, grouped by parent folder like GitHub Desktop, with branch, ahead/behind, and change counts; open any repository to commit directly without starting a session in that project first. The overview refreshes every 30 seconds; a manual refresh spins the button, then shows a green check and the result, and changed rows highlight briefly.
+- **Cross-project repositories page**: the **Git** entry in the left sidebar lists every workspace in the current DSH, grouped by parent folder like GitHub Desktop, with branch, ahead/behind, and change counts; open any repository to commit directly without starting a session in that project first. The overview refreshes every 30 seconds; a manual refresh spins the button, then shows a green check and how many workspaces' statuses changed (or that none did), and changed rows highlight briefly.
 
 ![Cross-project repositories page](assets/screenshots/08-global.png)
 
@@ -141,7 +145,7 @@ Refresh the page after installing. There are three entry points:
 
 **Q: Why does the toolbar button change?**
 
-A: It reflects one thing only: what a click will mainly do. In sync is Fetch origin, behind is Pull origin, local commits is Push origin, both sides is Sync, and no upstream is Publish branch. The button shows the last fetch time and ahead/behind count badges with directional arrows; the repository row shows the upstream. After clicking, the status line tells you whether it fetched, merged, or pushed, and whether it touched the stash.
+A: It reflects one thing only: what a click will mainly do. In sync is Fetch origin, behind is Pull origin, local commits is Push origin, both sides is Sync, and no upstream is Publish branch. A deleted upstream is Republish branch; with no remote at all the button is disabled and the panel explains how to add one. The button shows the last fetch time and ahead/behind count badges with directional arrows; the repository row shows the upstream. After clicking, the status line tells you whether it fetched, merged, or pushed, and whether it touched the stash.
 
 **Q: Does it ever force push?**
 

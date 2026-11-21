@@ -625,9 +625,14 @@ ctx.slots.inject('sidebar.panellist', () =>
 - 所有宽度都使用单列 tab：`提交 | 变更 | 历史 | 分支 | 差异`，默认选中「提交」。
   提交页不再固定在底部；宽幅也不做左右分栏，避免破坏一体化视觉。
 - 顶栏只有仓库名、分支下拉和一个同步主按钮；按钮按 snapshot 显示
-  `Fetch origin` / `Pull origin` / `Push origin` / `Sync` / `Publish branch`，
-  点击永远调用 `sync`，由 Host 决定 fetch / merge / push。上次 fetch、ahead/behind、
-  upstream 以文本显示。
+  `Fetch origin` / `Pull origin` / `Push origin` / `Sync` / `Publish branch` /
+  「重新发布分支」。没有配置远端（`repo.hasRemote === false`）时显示「未配置远端」
+  并禁用；上游被删除（`repo.upstreamGone`）时不显示 ahead/behind 徽标，顶栏标出
+  已失效的 upstream。游离 HEAD 下调 `fetch`，其余调 `sync`，由 Host 决定
+  fetch / merge / push。上次 fetch、ahead/behind、upstream 以文本显示。
+- 合并 / 变基 / cherry-pick / revert 进行中时，面板顶部（所有 tab）显示操作条和
+  继续 / 中止按钮，顶栏副标题提示「当前操作还没结束」，提交按钮禁用并显示
+  「先继续或中止当前操作」，避免绕过继续流程。
 - 「变更」把所有状态收拢成一个平铺列表，默认全部勾选；取消勾选只影响本次提交，
   `commit` 会带 `paths` / `exclude`。列表不提供单独的 stage / unstage 按钮。
 - 轮询：每 8s `snapshot`（`document.hidden` 时跳过）；window focus 和
@@ -647,7 +652,7 @@ ctx.slots.inject('sidebar.panellist', () =>
 `sessionId = null`，并创建独立的 controller。因此没有会话也能提交、同步、看历史；
 AI 提交信息在没有会话时改用默认模型。概览每 30s 调用一次 `overview`，页面刚打开
 或手动刷新时立即调用。手动刷新至少保持 650ms 的旋转状态，完成后按钮短暂变绿色对勾；
-状态行显示正在刷新、更新数量、已是最新或失败原因，变化仓库行高亮 1.5s。选中仓库的
+状态行显示正在刷新、几个工作区状态有变化、状态无变化或失败原因，变化仓库行高亮 1.5s。选中仓库的
 snapshot 更新会即时回写对应的仓库行。
 
 ### 5.4 本地持久化

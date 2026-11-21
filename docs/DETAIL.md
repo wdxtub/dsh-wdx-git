@@ -17,6 +17,8 @@ button label follows the repository state:
 | Ahead of the remote | Push origin |
 | Both sides have new commits | Sync |
 | Branch has no upstream | Publish branch |
+| Upstream branch deleted | Republish branch |
+| No remote configured | No remote (disabled; add one first) |
 
 When the branch is behind or ahead, the button shows count badges with directional
 arrows: ↓ for remote commits to pull, ↑ for local commits to push.
@@ -44,7 +46,7 @@ project.
 
 The overview refreshes every 30 seconds, and the toolbar button refreshes it on
 demand. A manual refresh spins for at least 650ms, turns into a green check,
-and reports how many repositories changed (or that everything is current) in
+and reports how many workspaces' statuses changed (or that none did) in
 the rail status line; changed rows highlight for 1.5s. With no session, AI
 commit messages use the default model. Workspaces
 that are not Git repositories are still listed and marked "Not a Git repository".

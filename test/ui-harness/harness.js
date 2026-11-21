@@ -1,5 +1,6 @@
 (function () {
   var params = new URLSearchParams(location.search)
+  var localeLang = params.get('lang') || 'zh'
   var narrow = params.has('narrow')
   var conflictMode = params.has('conflict')
   var slowOverview = params.has('slow')
@@ -38,6 +39,24 @@
   var behindOverride = params.get('behind')
   if (aheadOverride !== null) snapshot.repo.ahead = Number(aheadOverride)
   if (behindOverride !== null) snapshot.repo.behind = Number(behindOverride)
+  if (params.has('noRemote')) {
+    Object.assign(snapshot.repo, {
+      hasRemote: false, remoteName: null, remoteUrl: null, upstream: '', upstreamGone: false, ahead: 0, behind: 0,
+    })
+  }
+  if (params.has('gone')) {
+    Object.assign(snapshot.repo, { upstream: 'origin/main', upstreamGone: true, hasRemote: true })
+  }
+  if (params.has('detached')) {
+    Object.assign(snapshot.repo, {
+      branch: '', detached: true, upstream: '', upstreamGone: false, ahead: 0, behind: 0,
+    })
+  }
+  if (params.has('operation')) {
+    Object.assign(snapshot, {
+      operation: { merge: true, rebase: false, cherryPick: false, revert: false, conflicted: 0, inProgress: true },
+    })
+  }
   var registered = {}
   var dictionaries = null
 
@@ -81,7 +100,7 @@
       register: function (ns, dicts) { dictionaries = dicts },
       bind: function () {
         return function (key, values) {
-          var table = dictionaries && dictionaries.zh ? dictionaries.zh : {}
+          var table = (dictionaries && (dictionaries[localeLang] || dictionaries.zh)) || {}
           return interpolate(table[key] || key, values)
         }
       },
@@ -136,14 +155,13 @@
     await delay(op === 'aiCommit' || op === 'aiResolve' ? 650 : 90)
     if (op === 'overview') {
       if (slowOverview) await delay(1400)
-      return ok({
-        at: Date.now(),
-        repos: [
-          { path: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', name: 'dsh-wdx-git', branch: 'main', detached: false, upstream: 'origin/main', ahead: 0, behind: 0, changed: 2, clean: false, staged: 0, unstaged: 1, untracked: 1, conflicted: 0, error: null },
-          { path: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', name: 'wdxtub-blog', branch: 'draft/global-git', detached: false, upstream: 'origin/draft/global-git', ahead: 2, behind: 1, changed: 0, clean: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 0, error: null },
-          { path: '/Users/wdxtub/Documents/notes', isRepo: false, error: 'not a git repository', code: 'not-a-repo' },
-        ],
-      })
+      var repos = [
+        { path: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/dsh-wdx-git', name: 'dsh-wdx-git', branch: 'main', detached: false, upstream: 'origin/main', ahead: 0, behind: 0, changed: 2, clean: false, staged: 0, unstaged: 1, untracked: 1, conflicted: 0, error: null },
+        { path: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', isRepo: true, root: '/Users/wdxtub/Documents/WhatThey/wdxtub-blog', name: 'wdxtub-blog', branch: 'draft/global-git', detached: false, upstream: 'origin/draft/global-git', ahead: 2, behind: 1, changed: 0, clean: true, staged: 0, unstaged: 0, untracked: 0, conflicted: 0, error: null },
+        { path: '/Users/wdxtub/Documents/notes', isRepo: false, error: 'not a git repository', code: 'not-a-repo' },
+      ]
+      if (params.has('rowError')) repos[1].error = 'permission denied (demo)'
+      return ok({ at: Date.now(), repos: repos })
     }
     if (op === 'snapshot') {
       if (backgroundDemo && !backgroundSeeded) {
@@ -304,6 +322,13 @@
     // and check that the finished task is reported on the way back.
     setTimeout(function () { moveSession(otherPath, 'wdxtub-blog') }, 2000)
     setTimeout(function () { moveSession(repoPath, 'dsh-wdx-git') }, 6000)
+  }
+  if (params.has('tab')) {
+    var tabIndex = { commit: 0, changes: 1, history: 2, branches: 3, diff: 4 }[params.get('tab')]
+    setTimeout(function () {
+      var buttons = document.querySelectorAll('.wx-tab')
+      if (tabIndex !== undefined && buttons[tabIndex]) buttons[tabIndex].click()
+    }, 800)
   }
   setTimeout(function () { window.__READY__ = true }, 700)
 })()
