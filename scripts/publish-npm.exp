@@ -33,7 +33,7 @@ expect {
     exp_continue
   }
   eof {}
-  timeout { puts "\nTIMEOUT" }
+  timeout { puts "\nTIMEOUT"; exit 3 }
 }
 catch wait result
 set code [lindex $result 3]

@@ -65,12 +65,17 @@ if [[ $CHECK_ONLY -eq 1 ]]; then
 fi
 
 LOG="$(mktemp -t dsh-wdx-git-publish.XXXXXX.log)"
+chmod 600 "$LOG"
 export NPM_PKG="$PKG"
 export NPM_VERSION="$VERSION"
 
 publish_once() {
   set +e
-  expect scripts/publish-npm.exp 2>&1 | tee "$LOG"
+  # Keep both attempts in the log, and redact npm's browser-auth URL: opening it
+  # completes CLI authentication and it must not persist in a file.
+  expect scripts/publish-npm.exp 2>&1 \
+    | sed -E 's#https://www\.npmjs\.com/(auth|login)[^[:space:]]*#<redacted-auth-url>#g' \
+    | tee -a "$LOG"
   local code=${PIPESTATUS[0]}
   set -e
   return "$code"

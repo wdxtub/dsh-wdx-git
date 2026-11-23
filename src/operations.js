@@ -5,9 +5,8 @@
  * returns plain JSON. The only filesystem write is `applyResolution`, guarded
  * by a repository-relative path check and a re-read of the index conflict.
  */
-import { readFile, stat } from 'node:fs/promises'
+import { lstat, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative } from 'node:path'
-import { writeFile } from 'node:fs/promises'
 import {
   GitError,
   brief,
@@ -542,7 +541,9 @@ export function createOperations(deps) {
       '--pretty=format:%H%x1f%P%x1f%h%x1f%an%x1f%ar%x1f%D%x1f%s',
       '-n', String(limit),
     ]
-    if (all) args.push('--all')
+    // refs/stash holds WIP/index commits that are not part of any branch; showing
+    // them at the top of History reads like the repository gained commits.
+    if (all) args.push('--exclude=refs/stash', '--all')
     else args.push('HEAD')
     const result = await runGit(args, { cwd: root, signal, allowFailure: true })
     if (result.code !== 0) {
@@ -1274,7 +1275,11 @@ export function createOperations(deps) {
     }
     let merged = ''
     try {
-      merged = await readFile(join(root, path), 'utf8')
+      // A conflicted path can be a symlink; reading it would follow the link and
+      // hand the target file's contents to the model. Only regular files are
+      // useful as merge context.
+      const info = await lstat(join(root, path))
+      if (info.isFile()) merged = await readFile(join(root, path), 'utf8')
     } catch {
       merged = ''
     }
@@ -1348,6 +1353,21 @@ export function createOperations(deps) {
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
       throw new GitError('path 超出仓库范围', { code: 'invalid-params' })
     }
+    // The relative-path check is lexical only: a worktree symlink would make
+    // writeFile follow the link and overwrite a file outside the repository.
+    let linked = false
+    try {
+      linked = (await lstat(absolute)).isSymbolicLink()
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw new GitError(`无法检查目标路径：${brief(error?.message ?? error, 400)}`, { code: 'internal' })
+      }
+    }
+    if (linked) {
+      throw new GitError('该冲突是符号链接，无法写入合并内容；请用「取一侧」选择 ours 或 theirs', {
+        code: 'invalid-params',
+      })
+    }
     await writeFileImpl(absolute, content, 'utf8')
     await runGit(['add', '--', path], { cwd: root, signal, timeoutMs: timeouts.write })
   }
@@ -1378,6 +1398,18 @@ export function createOperations(deps) {
     const rel = relative(root, absolute)
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
       throw new GitError('path 超出仓库范围', { code: 'invalid-params' })
+    }
+    // A symlink has no text to inspect and `git add` would silently record
+    // whichever target currently exists; force an explicit side choice instead.
+    try {
+      if ((await lstat(absolute)).isSymbolicLink()) {
+        throw new GitError('该冲突是符号链接，请用「取一侧」选择 ours 或 theirs', { code: 'invalid-params' })
+      }
+    } catch (error) {
+      if (error instanceof GitError) throw error
+      if (error?.code !== 'ENOENT') {
+        throw new GitError(`无法检查冲突文件：${brief(error?.message ?? error, 400)}`, { code: 'internal' })
+      }
     }
     let content = null
     try {

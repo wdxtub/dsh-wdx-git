@@ -69,7 +69,7 @@ WDX Git 不 force push、不自动 rebase，也不改写已有历史。
 
 ## 冲突
 
-fetch、merge、rebase、cherry-pick 或 revert 因冲突停下时，冲突页会显示
+fetch、merge、rebase、cherry-pick 或 revert 因冲突停下时，冲突弹窗会显示
 ours 和 theirs。可以取某一侧，让 AI 生成合并建议（只预览，确认后才写入），
 或点「AI 解决全部」：插件逐个文件生成合并结果并直接写入、暂存，大文件按冲突块
 分别处理，单个文件失败不会中断其余文件，最后汇总失败原因。设置里可以打开

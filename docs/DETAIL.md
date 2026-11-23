@@ -87,7 +87,7 @@ in progress.
 ## Conflicts
 
 When a fetch, merge, rebase, cherry-pick, or revert stops on a conflict, the
-Conflicts tab shows ours and theirs. Take one side, ask AI for a merge suggestion
+conflict dialog shows ours and theirs. Take one side, ask AI for a merge suggestion
 (preview only; nothing is written until you confirm), or use "Resolve all with AI":
 the plugin merges and stages each file in turn, splitting large files into conflict
 regions, and a failed file does not stop the rest. Settings also has "Resolve conflicts

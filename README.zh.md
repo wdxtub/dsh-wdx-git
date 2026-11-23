@@ -180,7 +180,7 @@ upstream 被删除时是「重新发布分支」；完全没有配置远端时�
 
 **Q：会不会自动 force push？**
 
-A：不会。远端前进导致 push 被拒时，只 fetch + merge + 重试一次；再失败就把
+A：不会。远端前进导致 push 被拒时，只 fetch + merge 并重试，最多 4 轮；再失败就把
 git 的错误原样告诉你。也不会自动 rebase 或改写历史。
 
 **Q：AI 会看到我的整个仓库吗？**
@@ -224,7 +224,7 @@ A：交互灵感来自 GitHub Desktop，但这是为 DSH 会话重新设计的�
 - RPC、数据结构和 Host ↔ Client 契约：[PROTOCOL.md](PROTOCOL.md)
 - 版本记录：[CHANGELOG.md](CHANGELOG.md)
 - 发布流程：[RELEASING.md](RELEASING.md)
-- 运行测试：`npm test`（当前 63 个测试）
+- 运行测试：`npm test`（当前 72 个测试）
 - 实现：Host 侧 `index.js` / `src/`，客户端单文件 `lib/client.js`，无构建步骤。
 
 ## License

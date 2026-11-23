@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, symlink, writeFile } from 'node:fs/promises'
 import { createOperations } from '../src/operations.js'
-import { chooseLowEffort, resolveModelSelection, looksLikeSubject } from '../src/ai.js'
+import { chooseLowEffort, hasConflictMarkers, resolveModelSelection, looksLikeSubject } from '../src/ai.js'
 import { exec, createRepo, cloneRepo, write, fakeSessions, cleanup, tempDir, git } from './helpers.mjs'
 
 /**
@@ -425,4 +425,26 @@ test('AI commit context can be limited to the selected paths', async (t) => {
   assert.match(prompt, /A_ONLY_MARKER/)
   assert.doesNotMatch(prompt, /B_EXCLUDED_MARKER/)
   assert.doesNotMatch(prompt, /docs\/b\.md/)
+})
+test('hasConflictMarkers ignores a bare line of equals signs', () => {
+  assert.equal(hasConflictMarkers('Heading\n=======\ncontent\n'), false)
+  assert.equal(hasConflictMarkers('<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> main\n'), true)
+})
+
+test('AI commit does not read the target of an untracked symlink', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('creating symlinks needs extra privileges on Windows')
+    return
+  }
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await writeFile(`${env.base}/secret.txt`, 'TOP_SECRET_CONTENT\n')
+  await symlink('../secret.txt', `${env.repo}/link`)
+
+  const llm = captureLlm('chore: add link\n')
+  const operations = createOperations({ exec, services: services(llm) })
+  const result = await operations.handle('aiCommit', { cwd: env.repo })
+  assert.equal(result.subject, 'chore: add link')
+  const prompt = llm.calls[0].messages[0].content[0].text
+  assert.equal(prompt.includes('TOP_SECRET_CONTENT'), false)
 })

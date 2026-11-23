@@ -5,7 +5,7 @@
  * The host owns what the model sees (diff, file list, recent commits, branch);
  * a user-supplied prompt can only change *how* the message is written.
  */
-import { readFile } from 'node:fs/promises'
+import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { GitError, brief } from './git.js'
 
@@ -425,6 +425,9 @@ async function readSmallTextFile(cwd, path, limit) {
     const absolute = join(cwd, path)
     const rel = relative(cwd, absolute)
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null
+    // An untracked symlink's target may live outside the repository; reading it
+    // would send private file contents to the model.
+    if ((await lstat(absolute)).isSymbolicLink()) return null
     const buffer = await readFile(absolute)
     if (buffer.length > 256 * 1024) return null
     const text = buffer.toString('utf8')
@@ -786,5 +789,9 @@ function clip(text, max) {
 }
 
 export function hasConflictMarkers(text) {
-  return /^(<{7}|={7}|>{7})( |$)/m.test(String(text ?? ''))
+  const value = String(text ?? '')
+  // `=======` alone is ordinary content (setext headings, banners); git only
+  // writes it between the two branch markers, so require the closing side too.
+  if (/^<{7}( |$)/m.test(value)) return true
+  return /^>{7}( |$)/m.test(value) && /^={7}( |$)/m.test(value)
 }

@@ -149,7 +149,7 @@ A: It reflects one thing only: what a click will mainly do. In sync is Fetch ori
 
 **Q: Does it ever force push?**
 
-A: No. When the remote has advanced and the push is rejected, it only fetches + merges + retries once; if that fails it shows you git's own error. It never rebases automatically or rewrites history.
+A: No. When the remote has advanced and the push is rejected, it fetches + merges and retries, up to four rounds; if that still fails it shows you git's own error. It never rebases automatically or rewrites history.
 
 **Q: Can AI see my whole repository?**
 
@@ -184,7 +184,7 @@ A: The interaction is inspired by GitHub Desktop, but this is a native panel red
 - RPC, data structures, and the Host ↔ Client contract: [PROTOCOL.md](PROTOCOL.md)
 - Release history: [CHANGELOG.md](CHANGELOG.md)
 - Release process: [RELEASING.md](RELEASING.md)
-- Run tests: `npm test` (currently 63 tests)
+- Run tests: `npm test` (currently 72 tests)
 - Implementation: Host side `index.js` / `src/`, client in the single file `lib/client.js`, no build step.
 
 ## License

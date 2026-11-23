@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createOperations } from '../src/operations.js'
 import { exec, createRepo, cloneRepo, write, git, cleanup, tempDir } from './helpers.mjs'
 
@@ -564,4 +564,89 @@ test('commit can stage only the selected paths and unstage excluded ones', async
   assert.equal(snapshot.status.staged.some((entry) => entry.path === 'c.txt'), false)
   const graph = await call('graph', { all: true })
   assert.equal(graph.commits[0].subject, 'feat: b only')
+})
+
+test('a symlink conflict cannot write or mark through the link', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('creating symlinks needs extra privileges on Windows')
+    return
+  }
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await writeFile(`${env.base}/outside-original.txt`, 'original\n')
+  await symlink('../outside-original.txt', `${env.repo}/link`)
+  await git(['add', 'link'], env.repo)
+  await git(['commit', '-qm', 'chore: add link'], env.repo)
+  await git(['push', '-q', 'origin', 'main'], env.repo)
+
+  const clone = await cloneRepo(env.base)
+
+  await writeFile(`${env.base}/outside-other.txt`, 'other\n')
+  await rm(`${clone}/link`)
+  await symlink('../outside-other.txt', `${clone}/link`)
+  await git(['add', 'link'], clone)
+  await git(['commit', '-qm', 'chore: retarget link remotely'], clone)
+  await git(['push', '-q', 'origin', 'main'], clone)
+
+  await writeFile(`${env.base}/outside-local.txt`, 'local\n')
+  await rm(`${env.repo}/link`)
+  await symlink('../outside-local.txt', `${env.repo}/link`)
+  await git(['add', 'link'], env.repo)
+  await git(['commit', '-qm', 'chore: retarget link locally'], env.repo)
+
+  const synced = await local('sync')
+  assert.equal(synced.conflict, true)
+  assert.deepEqual(synced.conflictFiles, ['link'])
+
+  const before = await readFile(`${env.base}/outside-local.txt`, 'utf8')
+  const writeRejected = await local('applyResolution', { path: 'link', content: 'pwned\n' })
+    .catch((error) => error)
+  assert.equal(writeRejected.code, 'invalid-params')
+  assert.equal(await readFile(`${env.base}/outside-local.txt`, 'utf8'), before)
+
+  const markRejected = await local('markResolved', { path: 'link' }).catch((error) => error)
+  assert.equal(markRejected.code, 'invalid-params')
+
+  const snapshot = await local('snapshot')
+  assert.equal(snapshot.status.conflicted.length, 1)
+})
+
+test('graph keeps stash entries out of the commit history', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const call = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await write(env.repo, 'a.txt', 'one\n')
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-qm', 'feat: add a'], env.repo)
+  await write(env.repo, 'a.txt', 'two\n')
+  await git(['stash', 'push', '-u', '-m', 'hidden stash'], env.repo)
+
+  const graph = await call('graph', { all: true })
+  const subjects = graph.commits.map((commit) => commit.subject)
+  assert.equal(subjects.includes('feat: add a'), true)
+  assert.equal(subjects.some((subject) => String(subject).includes('hidden stash')), false)
+  assert.equal(graph.commits.some((commit) => (commit.refs || []).includes('refs/stash')), false)
+})
+
+test('discarding a staged rename cleans the old and new paths', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const operations = createOperations({ exec })
+  const call = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+
+  await git(['mv', 'README.md', 'RENAMED.md'], env.repo)
+  const renamed = await call('snapshot')
+  const row = renamed.status.staged.find((entry) => entry.path === 'RENAMED.md')
+  assert.equal(row.oldPath, 'README.md')
+
+  await call('discard', { paths: ['RENAMED.md', 'README.md'], mode: 'all' })
+  const snapshot = await call('snapshot')
+  assert.equal(snapshot.status.clean, true)
+  assert.equal(await readFile(`${env.repo}/README.md`, 'utf8'), '# repo\n')
+  assert.equal(await readFile(`${env.repo}/RENAMED.md`, 'utf8').then(() => true).catch(() => false), false)
 })

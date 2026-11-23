@@ -31,7 +31,7 @@ export function apply(ctx) { /* ctx.connection.fetch.register(...) */ }
 Client 注入：
 
 ```js
-exports.inject = ['slots', 'locale', 'sessions', 'sidebarRight', 'sidebarRightTabs']
+exports.inject = ['slots', 'locale', 'sessions', 'sidebarRight', 'sidebarRightTabs', 'workspaces']
 ```
 
 ## 2. HTTP RPC
@@ -78,7 +78,8 @@ content-type: application/json
 - 写操作：60s
 - fetch：240s
 - sync/pull/push：420s
-- AI：150s
+- AI 提交信息：150s
+- AI 冲突解决：360s
 
 ## 3. 数据结构
 
@@ -280,9 +281,6 @@ content-type: application/json
 {
   "mode": "worktree",
   "path": "src/a.js",
-  "conflict": false,
-  "oursExists": true,
-  "theirsExists": true,
   "additions": 3,
   "deletions": 1,
   "binary": false,
@@ -304,6 +302,9 @@ content-type: application/json
   }]
 }
 ```
+
+普通 `worktree` / `staged` / `commit` / `untracked` 响应不含 `conflict` / `oursExists` /
+`theirsExists`；`worktree` 的 path 是冲突文件时 Host 返回 `mode: "conflict"` 并附加这三个字段。
 
 - `inline` 片段拼接后精确等于原 `text`。
 - 只有同 hunk 内相邻的连续删除块与新增块按下标配对时才附加；超过 420 token 或任一侧为空时退化为整行。
@@ -360,7 +361,7 @@ commit id：合并因冲突停下时它还在 stash 里，冲突恢复成功但 
 非冲突原因失败（条目保留）。客户端在冲突解决后会先 continue 操作，再按 hash 恢复或
 删除这个 stash，最后按原动作的意图（sync / push）自动推送。
 
-`steps[].id`：`fetch` / `upstream` / `stash` / `merge` / `stash-restore` / `push-retry` / `push`。
+`steps[].id`：`fetch` / `upstream` / `stash` / `merge` / `stash-restore` / `stash-restore-failed` / `push-retry` / `push` / `tags`。
 
 推送被拒时 fetch + merge + 重试，最多 4 轮；远端在合并期间连续前进也不会在第二次
 拒绝时就放弃。
@@ -393,8 +394,8 @@ stash 等）碰到终端里其他 git 进程占用 `index.lock` 时会自动等�
 `continueOperation`：
 
 - 成功 → `{ output, operation, conflict: false, stale: false, stashHash }`。
-- 遇到下一个冲突 → `{ conflict: true, conflictFiles 在 operation 里, stashHash }`；stash
-  仍停着，等整个操作结束后按 hash 恢复。
+- 遇到下一个冲突 → `{ conflict: true, operation, stashHash }`；冲突清单不在返回值里，
+  客户端读最新 snapshot 的 `status.conflicted`；stash 仍停着，等整个操作结束后按 hash 恢复。
 - 为让 git 接受 continue 而自动暂存的未暂存改动，解决冲突后必须恢复；`stashApplied: true`
   表示恢复时产生了冲突，冲突解决后按 hash 删除该条目。
 - 空 cherry-pick / revert 自动 `--skip` 并返回 `skipped: true`。
@@ -672,7 +673,7 @@ snapshot 更新会即时回写对应的仓库行。
 - 所有 git 命令走 argv 数组，`ctx.subprocess.spawn`，不经过 shell。
 - `cwd` 必须绝对路径；paths 必须仓库内相对路径且不含 `..`。
 - refs 白名单 `[\p{L}\p{N}._/-]+`，拒绝前导 `-`；hash 必须 4-40 位十六进制。
-- `applyResolution` 与 `aiResolve(apply)` 会写文件：写入前再次确认冲突状态 + 路径前缀检查 + 内容/冲突标记校验；大文件按块解析时，全部块成功后才一次性写盘。
+- `applyResolution` 与 `aiResolve(apply)` 会写文件：写入前再次确认冲突状态 + 路径前缀检查 + 拒绝符号链接（`lstat`）+ 内容/冲突标记校验；大文件按块解析时，全部块成功后才一次性写盘。符号链接冲突只能用「取一侧」，`markResolved` 同样拒绝。
 - git 子进程环境清空继承的坏 `GIT_CONFIG_*`，并设置 `GIT_TERMINAL_PROMPT=0`、
   `GIT_PAGER=cat`、`LC_ALL=C`、`GIT_EDITOR=true`，避免交互输入和本地化解析差异。
 - macOS 上如果父进程没有显式代理变量，Host 读取 `scutil --proxy`，把系统
