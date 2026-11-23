@@ -184,7 +184,7 @@ A: The interaction is inspired by GitHub Desktop, but this is a native panel red
 - RPC, data structures, and the Host ↔ Client contract: [PROTOCOL.md](PROTOCOL.md)
 - Release history: [CHANGELOG.md](CHANGELOG.md)
 - Release process: [RELEASING.md](RELEASING.md)
-- Run tests: `npm test` (currently 72 tests)
+- Run tests: `npm test` (currently 80 tests)
 - Implementation: Host side `index.js` / `src/`, client in the single file `lib/client.js`, no build step.
 
 ## License

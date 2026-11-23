@@ -224,7 +224,7 @@ A：交互灵感来自 GitHub Desktop，但这是为 DSH 会话重新设计的�
 - RPC、数据结构和 Host ↔ Client 契约：[PROTOCOL.md](PROTOCOL.md)
 - 版本记录：[CHANGELOG.md](CHANGELOG.md)
 - 发布流程：[RELEASING.md](RELEASING.md)
-- 运行测试：`npm test`（当前 72 个测试）
+- 运行测试：`npm test`（当前 80 个测试）
 - 实现：Host 侧 `index.js` / `src/`，客户端单文件 `lib/client.js`，无构建步骤。
 
 ## License
