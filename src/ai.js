@@ -13,12 +13,34 @@ const COMMIT_DIFF_LIMIT = 30000
 const MAX_UNTRACKED_FILES = 5
 const MAX_UNTRACKED_BYTES = 24000
 const MAX_COMMIT_RETRIES = 3
-const COMMIT_MAX_TOKENS = 1600
-const RETRY_TOKEN_STEP = 600
-const MAX_COMMIT_TOKENS = 3400
+/** Tokens reserved for the message itself (subject + body). */
+const COMMIT_OUTPUT_TOKENS = 1600
+/** Tokens reserved for hidden reasoning when the model thinks before answering. */
+const COMMIT_THINKING_TOKENS = 6000
+/** Never ask a provider for more than this, however often a reply was cut. */
+const COMMIT_TOKEN_CEILING = 16384
+/** Room kept free in the context window for the provider's own bookkeeping. */
+const CONTEXT_SAFETY_TOKENS = 1024
 const BODY_REQUIRED_CHANGED_LINES = 5
 const MIN_BODY_CHARS = 60
 const MIN_BODY_UNIT_CHARS = 6
+
+/**
+ * Reasoning models spend the output budget on hidden thinking before the
+ * visible answer starts, so the request needs room for both. The effort ids
+ * are adapter-owned, so unknown ids fall back to the default allowance.
+ */
+const THINKING_TOKEN_ALLOWANCE = {
+  minimal: 4000,
+  low: 6000,
+  medium: 10000,
+  high: 16000,
+  xhigh: 16000,
+  max: 16000,
+}
+const OFF_EFFORT = /^(none|off|disabled|no[-_]?reasoning)$/i
+const TRUNCATED_WARNING = '模型输出被截断（思考占用了大部分预算），正文可能不完整'
+const TRUNCATION_HINT = '可降低思考等级或换更快的模型'
 
 export const COMMIT_SYSTEM_PROMPT = [
   'You are a senior engineer writing a Git commit message for this repository.',
@@ -95,7 +117,65 @@ export async function resolveModelSelection(options) {
     label: `${candidate.provider}/${candidate.model}`,
     efforts,
     effortName: effortNameOf(info?.reasoning?.efforts, effort),
+    // The provider's own output cap and context size: a request may not
+    // promise more tokens than the model can ever produce.
+    outputCap: Number.isSafeInteger(info?.defaultMaxTokens) ? info.defaultMaxTokens : undefined,
+    contextWindow: Number.isSafeInteger(info?.context?.contextWindow) ? info.context.contextWindow : undefined,
   }
+}
+
+/** Rough token estimate: CJK is about one token per character, latin less. */
+export function estimateTokens(text) {
+  const value = String(text ?? '')
+  if (value === '') return 0
+  const cjk = (value.match(/[\u2e80-\u9fff\u3040-\u30ff\uac00-\ud7af]/g) ?? []).length
+  return cjk + Math.ceil((value.length - cjk) / 3)
+}
+
+/** Tokens a reasoning effort is expected to spend on hidden thinking. */
+export function thinkingAllowance(effort) {
+  if (!effort) return 0
+  const id = String(effort).toLowerCase()
+  if (OFF_EFFORT.test(id)) return 0
+  return THINKING_TOKEN_ALLOWANCE[id] ?? COMMIT_THINKING_TOKENS
+}
+
+/**
+ * Budget the output of one model request.
+ *
+ * A reasoning model burns the same output budget on hidden thinking, so a
+ * budget that only covers the visible answer comes back truncated. The budget
+ * is therefore grown to leave room for thinking, bounded by the provider's own
+ * output cap and by what is left of the model's context window.
+ *
+ * @param {{
+ *   effort?: string,
+ *   outputCap?: number,
+ *   contextWindow?: number,
+ *   input?: string,
+ *   wanted?: number,
+ *   ceiling?: number,
+ * }} options
+ */
+export function planOutputTokens(options) {
+  const target = Math.max(256, options.wanted ?? 0) + thinkingAllowance(options.effort)
+  let ceiling = options.ceiling ?? COMMIT_TOKEN_CEILING
+  if (Number.isSafeInteger(options.outputCap) && options.outputCap > 0) {
+    ceiling = Math.min(ceiling, options.outputCap)
+  }
+  if (Number.isSafeInteger(options.contextWindow) && options.contextWindow > 0) {
+    const room = options.contextWindow - estimateTokens(options.input) - CONTEXT_SAFETY_TOKENS
+    ceiling = Math.min(ceiling, Math.max(256, room))
+  }
+  return {
+    maxTokens: Math.max(256, Math.min(target, ceiling)),
+    ceiling: Math.max(256, ceiling),
+  }
+}
+
+/** Budget the output of one commit-message request. */
+export function planCommitTokens(options) {
+  return planOutputTokens({ ...options, wanted: COMMIT_OUTPUT_TOKENS })
 }
 
 /** Pick `low`, else an off/none effort, else leave it to the provider. */
@@ -227,35 +307,44 @@ export async function draftCommitMessage(options) {
     untrackedDetail = pieces.join('\n\n')
   }
 
-  const data = buildDataBlock({
-    branch,
-    recent,
-    files: visibleFiles,
-    stat,
-    diff: diff.slice(0, COMMIT_DIFF_LIMIT),
-    diffTruncated: diff.length > COMMIT_DIFF_LIMIT,
-    untrackedDetail,
-    hint,
-  })
-
   const custom = String(options.customPrompt ?? '').trim().slice(0, 5000)
   const system = custom !== '' ? custom : COMMIT_SYSTEM_PROMPT
   // A custom prompt may deliberately write shorter messages, so only the
   // built-in prompt enforces a body for substantial changes.
   const requiresBody = custom === '' && needsDetailedBody({ diff, files: visibleFiles, untrackedDetail })
 
+  const contextWindow = selection.contextWindow
+  // The output budget covers the message and the thinking in front of it.
+  const wanted = COMMIT_OUTPUT_TOKENS + thinkingAllowance(selection.reasoningEffort)
+  const blockInput = { branch, recent, files: visibleFiles, stat, untrackedDetail, hint }
+  const fitted = fitDiffToContext({ diff, system, contextWindow, input: blockInput, wanted })
+  const data = buildDataBlock({
+    ...blockInput,
+    untrackedDetail: fitted.untrackedDetail,
+    diff: fitted.diff,
+    diffTruncated: fitted.diffTruncated,
+  })
+
+  const plan = planCommitTokens({
+    effort: selection.reasoningEffort,
+    outputCap: selection.outputCap,
+    contextWindow,
+    input: `${system}\n${data}`,
+  })
+
   let attempts = 0
   let lastValid = null
   let lastValidTruncated = false
   let lastProblem = ''
   let lastTruncated = false
+  let budget = plan.maxTokens
   while (attempts <= MAX_COMMIT_RETRIES) {
     const output = await streamCompletion({
       llm,
       selection,
       system,
       user: attempts === 0 ? data : `${data}\n\n---\n${retryInstruction(lastProblem)}`,
-      maxTokens: Math.min(MAX_COMMIT_TOKENS, COMMIT_MAX_TOKENS + attempts * RETRY_TOKEN_STEP),
+      maxTokens: budget,
       temperature: 0.2,
       signal,
     })
@@ -274,12 +363,20 @@ export async function draftCommitMessage(options) {
         message: parsed.body === '' ? parsed.subject : `${parsed.subject}\n\n${parsed.body}`,
         model: selection.label,
         fallback: false,
-        truncated: false,
+        truncated: lastTruncated,
         attempts,
-        warning: '',
+        reason: lastTruncated ? 'truncated' : '',
+        warning: lastTruncated ? TRUNCATED_WARNING : '',
       }
     }
     lastProblem = problem
+    // A cut-off reply means the budget was too small: ask for more next time.
+    if (lastTruncated) {
+      const grown = Math.min(plan.ceiling, Math.max(budget * 2, budget + 512))
+      // Without room to grow, another attempt would be cut the same way.
+      if (grown <= budget) break
+      budget = grown
+    }
   }
 
   if (lastValid !== null) {
@@ -291,7 +388,8 @@ export async function draftCommitMessage(options) {
       fallback: false,
       truncated: lastValidTruncated,
       attempts,
-      warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已只保留标题`,
+      reason: 'invalid',
+      warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已只保留标题${truncationHint(lastTruncated)}`,
     }
   }
   const subject = fallbackSubject(visibleStatus, chinese)
@@ -303,24 +401,93 @@ export async function draftCommitMessage(options) {
     fallback: true,
     truncated: lastTruncated,
     attempts,
-    warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已使用降级文案`,
+    reason: 'fallback',
+    warning: `模型连续 ${attempts} 次输出不合格（${lastProblem}），已使用降级文案${truncationHint(lastTruncated)}`,
   }
 }
 
+/** Tell the user how to get a complete message next time. */
+function truncationHint(truncated) {
+  return truncated ? `；${TRUNCATION_HINT}` : ''
+}
+
+/**
+ * Judge a model reply.
+ *
+ * Truncation is only a problem when it actually cost content: a reply whose
+ * subject and body are already complete is kept, with a warning that the tail
+ * may be missing.
+ */
 function commitProblem(parsed, { recent, truncated, requiresBody }) {
-  if (truncated) return '输出被截断，正文没有写完'
-  if (parsed.subject.trim() === '') return '缺少标题行'
+  if (parsed.subject.trim() === '') {
+    return truncated ? '模型把输出预算用在了思考上，没有写出正文' : '缺少标题行'
+  }
   if (!looksLikeSubject(parsed.subject, recent)) {
     return '标题格式不合格：需要一行完整的提交标题，缺 Conventional 前缀、半句话、结尾标点或括号不闭合都不行'
   }
+  if (truncated && String(parsed.body ?? '').trim() !== '') {
+    // The body was cut off. Keep it only when it still reads as a finished
+    // set of sentences; otherwise ask the model for a complete reply.
+    const quality = bodyQualityProblem(parsed.body)
+    if (quality !== '') return '输出被截断，正文没有写完'
+    return ''
+  }
   if (requiresBody && bodyChars(parsed.body) < MIN_BODY_CHARS) {
-    return '缺少足够的正文：需要一句说明动机，再用 2-4 条要点写清具体改了什么、为什么'
+    return truncated
+      ? '输出被截断，正文没有写完'
+      : '缺少足够的正文：需要一句说明动机，再用 2-4 条要点写清具体改了什么、为什么'
   }
   if (requiresBody) {
     const quality = bodyQualityProblem(parsed.body)
     if (quality !== '') return quality
   }
   return ''
+}
+
+/**
+ * Fit the prompt into the model's context window.
+ *
+ * Without this a large diff (or a large new file) plus the answer budget can
+ * exceed the window and the provider rejects the request instead of answering.
+ * The content of new files goes first, then the diff: both are context, the
+ * diff is what the commit message is about.
+ */
+function fitDiffToContext({ diff, system, contextWindow, input, wanted }) {
+  const text = diff.slice(0, COMMIT_DIFF_LIMIT)
+  const truncated = diff.length > text.length
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+    return { diff: text, diffTruncated: truncated, untrackedDetail: input.untrackedDetail }
+  }
+  const budget = contextWindow - estimateTokens(system) - CONTEXT_SAFETY_TOKENS - wanted
+  let untrackedDetail = input.untrackedDetail
+  let fixed = buildDataBlock({ ...input, diff: '', diffTruncated: false })
+  let fixedTokens = estimateTokens(fixed)
+  if (fixedTokens > budget) {
+    // The content of new files is the biggest optional part: drop it until
+    // the rest fits.
+    const excess = fixedTokens - budget
+    const untrackedTokens = estimateTokens(untrackedDetail)
+    if (untrackedTokens > 0) {
+      const keep = Math.max(0, untrackedTokens - excess)
+      untrackedDetail = clipTokens(untrackedDetail, keep)
+      fixed = buildDataBlock({ ...input, diff: '', diffTruncated: false, untrackedDetail })
+      fixedTokens = estimateTokens(fixed)
+    }
+  }
+  const room = budget - fixedTokens
+  if (room <= 0) {
+    return { diff: '', diffTruncated: diff !== '', untrackedDetail }
+  }
+  const whole = estimateTokens(text)
+  if (whole <= room) return { diff: text, diffTruncated: truncated, untrackedDetail }
+  let chars = Math.floor(text.length * room / whole)
+  for (let attempt = 0; attempt < 4 && chars > 0; attempt += 1) {
+    const slice = text.slice(0, chars)
+    const tokens = estimateTokens(slice)
+    if (tokens <= room) return { diff: slice, diffTruncated: true, untrackedDetail }
+    chars = Math.floor(chars * room / tokens)
+  }
+  return { diff: text.slice(0, Math.max(0, chars)), diffTruncated: true, untrackedDetail }
 }
 
 /** Reject a substantial change whose body is only one short thought. */
@@ -549,6 +716,29 @@ async function streamCompletion({ llm, selection, system, user, maxTokens, tempe
   return { text, finishKind }
 }
 
+/**
+ * Stream a completion and give it more room when the reply was cut off.
+ *
+ * A reply that hits the output limit is usually a budget problem rather than a
+ * model problem — reasoning models spend the budget on hidden thinking — so
+ * ask again with more room before giving up. The budget never grows past the
+ * ceiling, which the context window and the provider's own cap define.
+ */
+async function completeWithGrowth({ llm, selection, system, user, maxTokens, ceiling, temperature, signal, retries = 2 }) {
+  const limit = Number.isSafeInteger(ceiling) && ceiling > 0 ? ceiling : Infinity
+  let budget = Number.isSafeInteger(maxTokens) && maxTokens > 0 ? maxTokens : 1200
+  let output = null
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    output = await streamCompletion({ llm, selection, system, user, maxTokens: budget, temperature, signal })
+    if (output.finishKind !== 'max-tokens') return output
+    const grown = Math.min(limit, Math.max(budget * 2, budget + 1024))
+    // Without room to grow, another attempt would be cut the same way.
+    if (grown <= budget) return output
+    budget = grown
+  }
+  return output
+}
+
 const CONFLICT_INPUT_LIMIT = 240000
 const CONFLICT_MERGED_LIMIT = 12000
 const CONFLICT_HUNK_LIMIT = 24000
@@ -612,27 +802,59 @@ export async function suggestConflictResolution(input) {
     '=== INCOMING SIDE (theirs) ===',
     input.theirsDeleted ? '(deleted on this side; no content)' : clip(input.theirs, 40000),
   ].join('\n')
-  const output = await streamCompletion({
-    llm: input.llm,
-    selection: input.selection,
-    system,
-    user: parts,
-    maxTokens: Math.min(8000, Math.max(1200, Math.ceil(total / 3) + 800)),
-    temperature: 0.1,
-    signal: input.signal,
-  })
-  if (output.finishKind === 'max-tokens') {
-    throw new GitError('模型输出被截断，未写入任何内容。请重试或手动解决。', { code: 'ai-unavailable' })
+  // The reply is the whole merged file, so the budget has to cover it plus the
+  // room a reasoning model spends on thinking.
+  const wanted = Math.max(1200, Math.ceil(total / 3) + 800)
+  const budget = wanted + thinkingAllowance(input.selection.reasoningEffort)
+  const contextWindow = input.selection.contextWindow
+  if (fitsContext({ contextWindow, input: `${system}\n${parts}`, wanted: budget })) {
+    const plan = planOutputTokens({
+      effort: input.selection.reasoningEffort,
+      outputCap: input.selection.outputCap,
+      contextWindow,
+      input: `${system}\n${parts}`,
+      wanted,
+    })
+    const output = await completeWithGrowth({
+      llm: input.llm,
+      selection: input.selection,
+      system,
+      user: parts,
+      maxTokens: plan.maxTokens,
+      ceiling: plan.ceiling,
+      temperature: 0.1,
+      signal: input.signal,
+    })
+    if (output.finishKind === 'max-tokens') {
+      throw new GitError('模型输出被截断，未写入任何内容。请重试或手动解决。', { code: 'ai-truncated' })
+    }
+    const cleaned = stripFences(output.text).replace(/\r\n/g, '\n').trim()
+    if (/^<<<DELETE_FILE>>>$/m.test(cleaned)) {
+      return { delete: true, content: null, model: input.selection.label, route: 'whole' }
+    }
+    if (cleaned === '') throw new GitError('模型返回了空内容，未写入任何内容', { code: 'ai-unavailable' })
+    if (hasConflictMarkers(cleaned)) {
+      throw new GitError('模型返回的内容仍包含冲突标记，已拒绝写入', { code: 'ai-unavailable' })
+    }
+    return { delete: false, content: cleaned, model: input.selection.label, route: 'whole' }
   }
-  const cleaned = stripFences(output.text).replace(/\r\n/g, '\n').trim()
-  if (/^<<<DELETE_FILE>>>$/m.test(cleaned)) {
-    return { delete: true, content: null, model: input.selection.label, route: 'whole' }
-  }
-  if (cleaned === '') throw new GitError('模型返回了空内容，未写入任何内容', { code: 'ai-unavailable' })
-  if (hasConflictMarkers(cleaned)) {
-    throw new GitError('模型返回的内容仍包含冲突标记，已拒绝写入', { code: 'ai-unavailable' })
-  }
-  return { delete: false, content: cleaned, model: input.selection.label, route: 'whole' }
+  // The file does not fit the model's context window: resolving it in one
+  // request would either fail or come back truncated. Resolving region by
+  // region keeps every part of the file intact.
+  if (hasConflictMarkers(merged)) return await resolveConflictByHunks(input, merged)
+  throw new GitError(
+    '冲突文件超出模型的上下文窗口，且没有可解析的冲突块，请手动解决',
+    { code: 'invalid-params' },
+  )
+}
+
+/**
+ * Whether a prompt and its answer still fit the model's context window.
+ * An unknown window counts as fitting: the provider decides then.
+ */
+function fitsContext({ contextWindow, input, wanted }) {
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return true
+  return estimateTokens(input) + wanted + CONTEXT_SAFETY_TOKENS <= contextWindow
 }
 
 const CONFLICT_HUNK_SYSTEM_PROMPT = [
@@ -704,19 +926,39 @@ async function resolveConflictByHunks(input, merged) {
       region.end + 1,
       Math.min(nextStart, region.end + 1 + CONFLICT_CONTEXT_LINES),
     )
-    const output = await streamCompletion({
+    // The reply replaces the conflict region, so it needs room for the
+    // replacement plus whatever the model spends on thinking.
+    const wanted = Math.max(1200, Math.ceil(size / 2) + 600)
+    const budget = wanted + thinkingAllowance(input.selection.reasoningEffort)
+    const sideLimit = hunkSideLimit({
+      selection: input.selection,
+      wanted: budget,
+      contextBefore,
+      contextAfter,
+      hint: input.hint,
+    })
+    const prompt = buildHunkPrompt(input, {
+      ours, theirs, base, contextBefore, contextAfter, sideLimit,
+    })
+    const plan = planOutputTokens({
+      effort: input.selection.reasoningEffort,
+      outputCap: input.selection.outputCap,
+      contextWindow: input.selection.contextWindow,
+      input: `${CONFLICT_HUNK_SYSTEM_PROMPT}\n${prompt}`,
+      wanted,
+    })
+    const output = await completeWithGrowth({
       llm: input.llm,
       selection: input.selection,
       system: CONFLICT_HUNK_SYSTEM_PROMPT,
-      user: buildHunkPrompt(input, {
-        ours, theirs, base, contextBefore, contextAfter,
-      }),
-      maxTokens: Math.min(8000, Math.max(1200, Math.ceil(size / 2) + 600)),
+      user: prompt,
+      maxTokens: plan.maxTokens,
+      ceiling: plan.ceiling,
       temperature: 0.1,
       signal: input.signal,
     })
     if (output.finishKind === 'max-tokens') {
-      throw new GitError(`第 ${index + 1} 个冲突块的输出被截断，未写入任何内容`, { code: 'ai-unavailable' })
+      throw new GitError(`第 ${index + 1} 个冲突块的输出被截断，未写入任何内容`, { code: 'ai-truncated' })
     }
     replacements.push(cleanHunkOutput(output.text, index))
   }
@@ -757,15 +999,40 @@ function buildHunkPrompt(input, hunk) {
   if (hunk.contextBefore.length > 0) {
     parts.push('=== LINES BEFORE THE CONFLICT ===', clip(hunk.contextBefore.join('\n'), 4000), '')
   }
-  parts.push('=== CURRENT BRANCH (ours) ===', clip(hunk.ours, CONFLICT_HUNK_LIMIT))
+  parts.push('=== CURRENT BRANCH (ours) ===', clipTokens(clip(hunk.ours, CONFLICT_HUNK_LIMIT), hunk.sideLimit))
   if (hunk.base !== null) {
-    parts.push('', '=== COMMON ANCESTOR (base) ===', clip(hunk.base, CONFLICT_HUNK_LIMIT))
+    parts.push('', '=== COMMON ANCESTOR (base) ===', clipTokens(clip(hunk.base, CONFLICT_HUNK_LIMIT), hunk.sideLimit))
   }
-  parts.push('', '=== INCOMING SIDE (theirs) ===', clip(hunk.theirs, CONFLICT_HUNK_LIMIT))
+  parts.push('', '=== INCOMING SIDE (theirs) ===', clipTokens(clip(hunk.theirs, CONFLICT_HUNK_LIMIT), hunk.sideLimit))
   if (hunk.contextAfter.length > 0) {
     parts.push('', '=== LINES AFTER THE CONFLICT ===', clip(hunk.contextAfter.join('\n'), 4000))
   }
   return parts.join('\n')
+}
+
+/**
+ * Tokens each side of a conflict may take before the request no longer fits
+ * the model's context window. Zero means the window size is unknown.
+ */
+function hunkSideLimit({ selection, wanted, contextBefore, contextAfter, hint }) {
+  const contextWindow = selection.contextWindow
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return 0
+  const fixed = estimateTokens(CONFLICT_HUNK_SYSTEM_PROMPT)
+    + estimateTokens(contextBefore.join('\n'))
+    + estimateTokens(contextAfter.join('\n'))
+    + estimateTokens(hint ?? '')
+    + 120
+  const room = contextWindow - fixed - CONTEXT_SAFETY_TOKENS - wanted
+  return Math.max(0, Math.floor(room / 3))
+}
+
+/** Cut text down to a token budget, keeping its head. */
+function clipTokens(text, maxTokens) {
+  const value = String(text ?? '')
+  if (!maxTokens) return value
+  const tokens = estimateTokens(value)
+  if (tokens <= maxTokens) return value
+  return value.slice(0, Math.floor(value.length * maxTokens / tokens))
 }
 
 function cleanHunkOutput(text, index) {

@@ -33,8 +33,12 @@ const READ_TIMEOUT = 30000
 const WRITE_TIMEOUT = 60000
 const NETWORK_TIMEOUT = 240000
 const SYNC_TIMEOUT = 420000
-const AI_TIMEOUT = 150000
-const RESOLVE_AI_TIMEOUT = 360000
+// A reasoning model needs minutes for one answer, and the commit flow may ask
+// it several times (a rejected or truncated reply is retried with a bigger
+// budget). The timeout has to cover the whole flow, not a single request.
+const AI_TIMEOUT = 420000
+// Conflict resolution can ask the model once per conflict region.
+const RESOLVE_AI_TIMEOUT = 600000
 const DIFF_MAX_CHARS = 400000
 const COMMIT_PROMPT_KEY = 'wdx.git.commitPrompt'
 const COMMIT_PROMPT_MAX = 5000
@@ -1215,6 +1219,7 @@ export function createOperations(deps) {
         truncated: false,
         attempts: 0,
         effort: null,
+        reason: 'unavailable',
         warning: `AI 不可用，已生成降级文案：${brief(error?.message ?? error, 300)}`,
       }
     }

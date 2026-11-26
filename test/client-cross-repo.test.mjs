@@ -14,7 +14,7 @@ async function loadController() {
   let tabComponent = null
   const pending = {}
   let snapshotPrompt = ''
-  const controllable = new Set(['aiCommit', 'commit', 'discard', 'fetch', 'setCommitPrompt', 'switchBranch'])
+  const controllable = new Set(['aiCommit', 'aiResolve', 'commit', 'discard', 'fetch', 'setCommitPrompt', 'switchBranch'])
 
   function json(data) {
     return { json: async () => ({ ok: true, data }) }
@@ -165,6 +165,62 @@ test('an AI message generated in repo A is not applied after switching to repo B
   assert.equal(controller.store.get().subject, '')
   assert.equal(controller.store.get().body, '')
   assert.equal(controller.store.get().aiGenerating, false)
+})
+
+test('regenerating a message clears the warning and error of the previous run', async () => {
+  const { controller, resolve } = await loadController()
+  seedRepoA(controller)
+  controller.store.set({
+    aiMessageWarning: '输出被截断', aiFallback: true, error: 'model failed', errorCode: 'ai-unavailable',
+  })
+
+  const pending = controller.generateMessage()
+  const running = controller.store.get()
+  assert.equal(running.aiMessageWarning, '')
+  assert.equal(running.aiFallback, false)
+  assert.equal(running.error, null)
+  assert.equal(running.errorCode, null)
+
+  resolve('aiCommit', {
+    subject: 'feat: generated', body: 'why', model: 'fake/cheap', fallback: false, truncated: true, warning: 'cut',
+  })
+  await pending
+
+  const done = controller.store.get()
+  assert.equal(done.aiGenerating, false)
+  assert.equal(done.aiMessageWarning, 'commit.truncated')
+  assert.equal(done.toastKind, 'warn')
+})
+
+test('regenerating a conflict suggestion clears the previous suggestion', async () => {
+  const { controller, resolve } = await loadController()
+  seedRepoA(controller)
+  controller.store.set({
+    conflict: {
+      path: 'a.txt',
+      info: { branch: 'main', incoming: 'feature' },
+      loading: false,
+      suggested: 'the old suggestion',
+      delete: false,
+      deterministic: false,
+      model: 'fake/cheap',
+      warning: 'the old warning',
+    },
+  })
+
+  const pending = controller.aiResolve()
+  const running = controller.store.get().conflict
+  assert.equal(running.loading, true)
+  assert.equal(running.suggested, null)
+  assert.equal(running.warning, '')
+  assert.equal(running.model, null)
+
+  resolve('aiResolve', { suggested: 'the new suggestion', delete: false, model: 'fake/cheap', warning: '' })
+  await pending
+
+  const done = controller.store.get().conflict
+  assert.equal(done.loading, false)
+  assert.equal(done.suggested, 'the new suggestion')
 })
 
 function switchToB(controller, patch) {

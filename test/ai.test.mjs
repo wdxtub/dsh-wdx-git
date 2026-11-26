@@ -2,17 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile, symlink, writeFile } from 'node:fs/promises'
 import { createOperations } from '../src/operations.js'
-import { chooseLowEffort, hasConflictMarkers, resolveModelSelection, looksLikeSubject } from '../src/ai.js'
+import { chooseLowEffort, estimateTokens, hasConflictMarkers, resolveModelSelection, looksLikeSubject } from '../src/ai.js'
 import { exec, createRepo, cloneRepo, write, fakeSessions, cleanup, tempDir, git } from './helpers.mjs'
 
 /**
  * Fake LLM that replies with one of the given texts per call (the last entry
  * repeats). Each entry is either a string or `{ text, finish }`.
  */
-function captureLlm(replies, { finish = 'stop', models } = {}) {
+function captureLlm(replies, { finish = 'stop', models, efforts, info } = {}) {
   const outputs = Array.isArray(replies) ? replies : [replies]
   const calls = []
   const catalog = models || [{ id: 'cheap', name: 'Cheap', provider: 'fake' }]
+  const effortsMeta = efforts || [{ id: 'low', name: 'Low' }, { id: 'none', name: 'No thinking' }]
   return {
     calls,
     listProviders: () => [{ id: 'fake', name: 'Fake Provider' }],
@@ -24,7 +25,8 @@ function captureLlm(replies, { finish = 'stop', models } = {}) {
         provider,
         id: model,
         name: entry.name,
-        reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'none', name: 'No thinking' }] },
+        ...(effortsMeta.length === 0 ? {} : { reasoning: { efforts: effortsMeta } }),
+        ...(info || {}),
       }
     },
     stream: (options) => ({
@@ -100,7 +102,8 @@ test('AI commit uses the session model at low effort and parses subject + body',
   assert.equal(result.fallback, false)
   assert.equal(result.attempts, 1)
   assert.equal(llm.calls.length, 1)
-  assert.equal(llm.calls[0].maxTokens, 1600)
+  // Low effort still makes the model think, so the budget covers thinking too.
+  assert.equal(llm.calls[0].maxTokens, 7600)
   assert.equal(llm.calls[0].reasoningEffort, 'low')
   assert.match(llm.calls[0].system, /Conventional Commits/)
   assert.match(llm.calls[0].system, /pull request summary/)
@@ -117,7 +120,7 @@ test('AI commit always includes untracked file content', async (t) => {
     cwd: env.repo, sessionId: 'session-1',
   })
   assert.equal(result.body, 'Add the missing notes.')
-  assert.equal(llm.calls[0].maxTokens, 1600)
+  assert.equal(llm.calls[0].maxTokens, 7600)
   assert.match(llm.calls[0].system, /senior engineer/)
   assert.match(llm.calls[0].messages[0].content[0].text, /UNTRACKED_MARKER_CONTENT/)
 })
@@ -191,9 +194,87 @@ test('a truncated reply is retried with a larger token budget', async (t) => {
   })
   assert.equal(result.truncated, false)
   assert.equal(result.attempts, 2)
-  assert.equal(llm.calls[0].maxTokens, 1600)
-  assert.equal(llm.calls[1].maxTokens, 2200)
+  assert.equal(llm.calls[0].maxTokens, 7600)
+  assert.equal(llm.calls[1].maxTokens, 15200)
   assert.match(result.body, /larger budget/)
+})
+
+test('a model that does not think gets a small output budget', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await write(env.repo, 'a.txt', 'a\n')
+  const llm = captureLlm('chore: update a.txt\n', { efforts: [] })
+  const operations = createOperations({ exec, services: services(llm) })
+  await operations.handle('aiCommit', { cwd: env.repo, sessionId: 'session-1' })
+  assert.equal(llm.calls[0].maxTokens, 1600)
+})
+
+test('the commit prompt is trimmed to fit a small context window', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const filler = Array.from({ length: 300 }, (_, index) => `line ${index} ${'x'.repeat(50)}`)
+  await write(env.repo, 'big.txt', `${filler.join('\n')}\n`)
+  await write(env.repo, 'new.txt', 'NEW_FILE_CONTENT\n')
+  const llm = captureLlm('chore: update the files\n', { info: { context: { contextWindow: 4000 } } })
+  const operations = createOperations({ exec, services: services(llm) })
+  await operations.handle('aiCommit', { cwd: env.repo, sessionId: 'session-1' })
+  const prompt = llm.calls[0].messages[0].content[0].text
+  // The prompt and the answer together have to fit the window.
+  assert.ok(estimateTokens(prompt) + llm.calls[0].maxTokens <= 4000)
+  assert.ok(prompt.length < 20000)
+})
+
+test('the output budget never exceeds the provider cap', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await write(env.repo, 'a.txt', 'a\n')
+  const llm = captureLlm('chore: update a.txt\n', { info: { defaultMaxTokens: 4096 } })
+  const operations = createOperations({ exec, services: services(llm) })
+  await operations.handle('aiCommit', { cwd: env.repo, sessionId: 'session-1' })
+  assert.equal(llm.calls[0].maxTokens, 4096)
+})
+
+test('a truncated reply keeps the finished body and warns about the cut', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await write(env.repo, 'docs/a.md', 'A_ONLY_MARKER\n')
+  await write(env.repo, 'docs/b.md', 'B_MARKER\n')
+  const body = [
+    'The notes were missing so the API contract stayed undocumented for every reader.',
+    '',
+    '- Add docs/a.md with the API notes.',
+    '- Add docs/b.md with the CLI notes.',
+  ].join('\n')
+  const llm = captureLlm([
+    { text: `docs(a): add both docs\n\n${body}\n`, finish: 'max-tokens' },
+  ])
+  const operations = createOperations({ exec, services: services(llm) })
+  const result = await operations.handle('aiCommit', {
+    cwd: env.repo, sessionId: 'session-1',
+  })
+  assert.equal(result.fallback, false)
+  assert.equal(result.truncated, true)
+  assert.equal(result.attempts, 1)
+  assert.match(result.body, /API notes/)
+  assert.match(result.warning, /截断/)
+})
+
+test('a reply that only thought and wrote nothing is retried with a bigger budget', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  await write(env.repo, 'a.txt', 'a\n')
+  const llm = captureLlm([
+    { text: '', finish: 'max-tokens' },
+    'chore: update a.txt\n',
+  ])
+  const operations = createOperations({ exec, services: services(llm) })
+  const result = await operations.handle('aiCommit', {
+    cwd: env.repo, sessionId: 'session-1',
+  })
+  assert.equal(result.attempts, 2)
+  assert.equal(result.subject, 'chore: update a.txt')
+  assert.equal(llm.calls[0].maxTokens, 7600)
+  assert.equal(llm.calls[1].maxTokens, 15200)
 })
 
 test('unusable model output retries three times, then falls back to a deterministic subject', async (t) => {
@@ -384,10 +465,95 @@ test('a truncated conflict resolution is rejected instead of writing half a file
   await local('sync')
 
   const error = await local('aiResolve', { path: 'README.md', sessionId: 'session-1' }).catch((reason) => reason)
-  assert.equal(error.code, 'ai-unavailable')
+  assert.equal(error.code, 'ai-truncated')
   assert.match(error.message, /截断/)
   const text = await readFile(`${env.repo}/README.md`, 'utf8')
   assert.match(text, /<<<<<<< /)
+})
+
+test('a truncated conflict reply is retried with a bigger budget', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const llm = captureLlm([
+    { text: '## Sync\n\nhalf a file', finish: 'max-tokens' },
+    '## Sync\n\nThe client calls one sync operation: fetch, merge, push.\n',
+  ])
+  const operations = createOperations({ exec, services: services(llm) })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+  const other = (op, params = {}) => operations.handle(op, { cwd: clone, ...params })
+
+  await write(clone, 'README.md', '# remote\n')
+  await other('commit', { message: 'fix: remote' })
+  await other('sync')
+  await write(env.repo, 'README.md', '# local\n')
+  await local('commit', { message: 'fix: local' })
+  await local('sync')
+
+  const suggested = await local('aiResolve', { path: 'README.md', sessionId: 'session-1' })
+  assert.match(suggested.suggested, /one sync operation/)
+  assert.equal(llm.calls.length, 2)
+  assert.ok(llm.calls[1].maxTokens > llm.calls[0].maxTokens)
+  const text = await readFile(`${env.repo}/README.md`, 'utf8')
+  assert.match(text, /<<<<<<< /)
+})
+
+test('a conflict resolution leaves room for thinking in the output budget', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const llm = captureLlm('## Sync\n\nMerged by the model.\n')
+  const operations = createOperations({ exec, services: services(llm) })
+  const local = (op, params = {}) => operations.handle(op, { cwd: env.repo, ...params })
+  const other = (op, params = {}) => operations.handle(op, { cwd: clone, ...params })
+
+  await write(clone, 'README.md', '# remote\n')
+  await other('commit', { message: 'fix: remote' })
+  await other('sync')
+  await write(env.repo, 'README.md', '# local\n')
+  await local('commit', { message: 'fix: local' })
+  await local('sync')
+
+  await local('aiResolve', { path: 'README.md', sessionId: 'session-1' })
+  // The reply is a whole file, so the budget covers the file plus thinking.
+  assert.ok(llm.calls[0].maxTokens >= 7200)
+})
+
+test('a conflict file that does not fit the context window is resolved region by region', async (t) => {
+  const env = await createRepo()
+  t.after(() => cleanup(env.base))
+  const clone = await cloneRepo(env.base)
+  const filler = Array.from({ length: 100 }, (_, index) => `line ${index} ${'x'.repeat(50)}`)
+  const content = `${filler.join('\n')}\n`
+  await write(env.repo, 'mid.txt', content)
+  await git(['add', '-A'], env.repo)
+  await git(['commit', '-q', '-m', 'chore: add the mid file'], env.repo)
+  await git(['push', '-q'], env.repo)
+  await git(['pull', '-q'], clone)
+
+  const remoteLines = content.split('\n')
+  remoteLines[50] = 'REMOTE_MARKER'
+  await write(clone, 'mid.txt', remoteLines.join('\n'))
+  const other = createOperations({ exec, services: services(captureLlm('x')) })
+  await other.handle('commit', { cwd: clone, message: 'fix: remote mid file' })
+  await other.handle('sync', { cwd: clone })
+
+  const localLines = content.split('\n')
+  localLines[50] = 'LOCAL_MARKER'
+  await write(env.repo, 'mid.txt', localLines.join('\n'))
+  // A context window far too small for the whole file forces the region route.
+  const llm = captureLlm('RESOLVED_MARKER\n', { info: { context: { contextWindow: 4000 } } })
+  const resolveOps = createOperations({ exec, services: services(llm) })
+  await resolveOps.handle('commit', { cwd: env.repo, message: 'fix: local mid file' })
+  await resolveOps.handle('sync', { cwd: env.repo })
+
+  const result = await resolveOps.handle('aiResolve', {
+    cwd: env.repo, path: 'mid.txt', sessionId: 'session-1', apply: true,
+  })
+  assert.equal(result.route, 'hunks')
+  const merged = await readFile(`${env.repo}/mid.txt`, 'utf8')
+  assert.match(merged, /RESOLVED_MARKER/)
+  assert.doesNotMatch(merged, /<<<<<<<|=======|>>>>>>>/)
 })
 
 test('AI drafting reads staged diffs even before the repository has a first commit', async (t) => {
